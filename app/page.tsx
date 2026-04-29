@@ -29,7 +29,7 @@ const today = () => new Date().toISOString().split("T")[0];
 const monthKey = (d: any) => d.slice(0, 7);
 const currentMonth = () => monthKey(today());
 
-function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function generateId(): string { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
 export default function App() {
   const [user, setUser] = useState(null);
