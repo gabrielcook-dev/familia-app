@@ -24,9 +24,9 @@ const COLORS = {
 };
 
 const fmt = (n: any) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const fmtSigned = (n) => (n >= 0 ? "+" : "-") + fmt(n);
+const fmtSigned = (n: any) => (n >= 0 ? "+" : "-") + fmt(n);
 const today = () => new Date().toISOString().split("T")[0];
-const monthKey = (d) => d.slice(0, 7);
+const monthKey = (d: any) => d.slice(0, 7);
 const currentMonth = () => monthKey(today());
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
