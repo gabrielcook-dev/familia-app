@@ -23,7 +23,7 @@ const COLORS = {
   border: "#e8e4dc"
 };
 
-const fmt = (n) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmt = (n: any) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtSigned = (n) => (n >= 0 ? "+" : "-") + fmt(n);
 const today = () => new Date().toISOString().split("T")[0];
 const monthKey = (d) => d.slice(0, 7);
