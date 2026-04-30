@@ -29,13 +29,23 @@ const today = () => new Date().toISOString().split("T")[0];
 const monthKey = (d: any) => d.slice(0, 7);
 const currentMonth = () => monthKey(today());
 
-function generateId(): string { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+
+function loadFromStorage(key: string) {
+  if (typeof window === "undefined") return null;
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+
+function saveToStorage(key: string, value: any) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<any>(null);
   const [tab, setTab] = useState("dashboard");
-  const [transactions, setTransactions] = useState([]);
-  const [goals, setGoals] = useState([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [goals, setGoals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -43,85 +53,81 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth());
   const [viewMode, setViewMode] = useState("family");
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(() => {
     setLoading(true);
-    try {
-      const [txRes, goalRes] = await Promise.all([
-        window.storage.get("transactions", true).catch(() => null),
-        window.storage.get("goals", true).catch(() => null)
-      ]);
-      if (txRes?.value) setTransactions(JSON.parse(txRes.value));
-      if (goalRes?.value) setGoals(JSON.parse(goalRes.value));
-    } catch (e) {}
+    const tx = loadFromStorage("familia_transactions");
+    const g = loadFromStorage("familia_goals");
+    if (tx) setTransactions(tx);
+    if (g) setGoals(g);
     setLoading(false);
   }, []);
 
   useEffect(() => { if (user) loadData(); }, [user, loadData]);
 
-  const saveTransactions = async (tx) => {
+  const saveTransactions = (tx: any[]) => {
     setSaving(true);
-    try { await window.storage.set("transactions", JSON.stringify(tx), true); } catch (e) {}
+    saveToStorage("familia_transactions", tx);
     setSaving(false);
   };
 
-  const saveGoals = async (g) => {
-    try { await window.storage.set("goals", JSON.stringify(g), true); } catch (e) {}
+  const saveGoals = (g: any[]) => {
+    saveToStorage("familia_goals", g);
   };
 
-  const addTransaction = async (t) => {
+  const addTransaction = (t: any) => {
     const updated = [{ ...t, id: generateId(), createdBy: user, createdAt: new Date().toISOString() }, ...transactions];
     setTransactions(updated);
-    await saveTransactions(updated);
+    saveTransactions(updated);
     setShowAdd(false);
   };
 
-  const deleteTransaction = async (id) => {
-    const updated = transactions.filter(t => t.id !== id);
+  const deleteTransaction = (id: string) => {
+    const updated = transactions.filter((t: any) => t.id !== id);
     setTransactions(updated);
-    await saveTransactions(updated);
+    saveTransactions(updated);
   };
 
-  const addGoal = async (g) => {
+  const addGoal = (g: any) => {
     const updated = [...goals, { ...g, id: generateId(), createdBy: user, saved: 0, createdAt: new Date().toISOString() }];
     setGoals(updated);
-    await saveGoals(updated);
+    saveGoals(updated);
     setShowAddGoal(false);
   };
 
-  const updateGoalSaved = async (id, amount) => {
-    const updated = goals.map(g => g.id === id ? { ...g, saved: Math.max(0, (g.saved || 0) + Number(amount)) } : g);
+  const updateGoalSaved = (id: string, amount: any) => {
+    const updated = goals.map((g: any) => g.id === id ? { ...g, saved: Math.max(0, (g.saved || 0) + Number(amount)) } : g);
     setGoals(updated);
-    await saveGoals(updated);
+    saveGoals(updated);
   };
 
-  const deleteGoal = async (id) => {
-    const updated = goals.filter(g => g.id !== id);
+  const deleteGoal = (id: string) => {
+    const updated = goals.filter((g: any) => g.id !== id);
     setGoals(updated);
-    await saveGoals(updated);
+    saveGoals(updated);
   };
 
-  const filteredTx = transactions.filter(t => {
+  const filteredTx = transactions.filter((t: any) => {
     const inMonth = monthKey(t.date) === selectedMonth;
     if (!inMonth) return false;
     if (viewMode === "family") return true;
     return t.createdBy === user;
   });
 
-  const income = filteredTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-  const expenses = filteredTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+  const income = filteredTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const expenses = filteredTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const net = income - expenses;
 
-  const byCategory = filteredTx.filter(t => t.type === "expense").reduce((acc, t) => {
+  const byCategory = filteredTx.filter((t: any) => t.type === "expense").reduce((acc: any, t: any) => {
     acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
     return acc;
   }, {});
 
-  const gabrielIncome = filteredTx.filter(t => t.type === "income" && t.createdBy === "gabriel").reduce((s, t) => s + Number(t.amount), 0);
-  const stephIncome = filteredTx.filter(t => t.type === "income" && t.createdBy === "steph").reduce((s, t) => s + Number(t.amount), 0);
-  const gabrielExpenses = filteredTx.filter(t => t.type === "expense" && t.createdBy === "gabriel").reduce((s, t) => s + Number(t.amount), 0);
-  const stephExpenses = filteredTx.filter(t => t.type === "expense" && t.createdBy === "steph").reduce((s, t) => s + Number(t.amount), 0);
+  const gabrielIncome = filteredTx.filter((t: any) => t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephIncome = filteredTx.filter((t: any) => t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const gabrielExpenses = filteredTx.filter((t: any) => t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephExpenses = filteredTx.filter((t: any) => t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
-  const months = [...new Set(transactions.map(t => monthKey(t.date)))].sort().reverse();
+  const months = [...new Set(transactions.map((t: any) => monthKey(t.date)))].sort().reverse();
   if (!months.includes(currentMonth())) months.unshift(currentMonth());
 
   if (!user) return <LoginScreen onLogin={setUser} />;
@@ -129,22 +135,18 @@ export default function App() {
   return (
     <div style={{ fontFamily: "'Georgia', serif", background: COLORS.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", position: "relative" }}>
       <Header user={user} onLogout={() => setUser(null)} saving={saving} onRefresh={loadData} />
-
       {loading ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300, color: COLORS.muted, fontStyle: "italic" }}>Loading family data...</div>
       ) : (
         <div style={{ padding: "0 0 100px" }}>
           {tab === "dashboard" && (
-            <Dashboard
-              income={income} expenses={expenses} net={net}
+            <Dashboard income={income} expenses={expenses} net={net}
               gabrielIncome={gabrielIncome} stephIncome={stephIncome}
               gabrielExpenses={gabrielExpenses} stephExpenses={stephExpenses}
               byCategory={byCategory} filteredTx={filteredTx}
               selectedMonth={selectedMonth} months={months}
               onMonthChange={setSelectedMonth}
-              viewMode={viewMode} onViewModeChange={setViewMode}
-              user={user}
-            />
+              viewMode={viewMode} onViewModeChange={setViewMode} user={user} />
           )}
           {tab === "transactions" && (
             <Transactions filteredTx={filteredTx} onDelete={deleteTransaction} user={user}
@@ -156,16 +158,14 @@ export default function App() {
           )}
         </div>
       )}
-
       <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowAdd(true)} />
-
       {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} />}
       {showAddGoal && <AddGoalModal onAdd={addGoal} onClose={() => setShowAddGoal(false)} user={user} />}
     </div>
   );
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin }: any) {
   return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div style={{ marginBottom: 12, fontSize: 40 }}>🌿</div>
@@ -191,7 +191,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function Header({ user, onLogout, saving, onRefresh }) {
+function Header({ user, onLogout, saving, onRefresh }: any) {
   return (
     <div style={{ background: COLORS.card, borderBottom: `1px solid ${COLORS.border}`, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -207,19 +207,19 @@ function Header({ user, onLogout, saving, onRefresh }) {
   );
 }
 
-function MonthPicker({ months, selected, onChange }) {
+function MonthPicker({ months, selected, onChange }: any) {
   return (
     <select value={selected} onChange={e => onChange(e.target.value)} style={{
       border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 10px",
       fontSize: 13, background: COLORS.card, color: COLORS.text, cursor: "pointer",
       fontFamily: "'Georgia', serif"
     }}>
-      {months.map(m => <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>)}
+      {months.map((m: string) => <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>)}
     </select>
   );
 }
 
-function ViewToggle({ viewMode, onChange }) {
+function ViewToggle({ viewMode, onChange }: any) {
   return (
     <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2 }}>
       {["family", "mine"].map(v => (
@@ -234,24 +234,21 @@ function ViewToggle({ viewMode, onChange }) {
   );
 }
 
-function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user }) {
-  const topCats = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const maxCat = topCats[0]?.[1] || 1;
-
+function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user }: any) {
+  const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
+  const maxCat = (topCats[0] as any)?.[1] || 1;
   const budgetGuide = [
     { label: "Needs (50%)", target: income * 0.5, color: "#4a9b7f" },
     { label: "Wants (15%)", target: income * 0.15, color: COLORS.accent },
     { label: "Savings (20%)", target: income * 0.2, color: COLORS.gabriel },
     { label: "Investment (15%)", target: income * 0.15, color: COLORS.steph },
   ];
-
   return (
     <div style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <MonthPicker months={months} selected={selectedMonth} onChange={onMonthChange} />
         <ViewToggle viewMode={viewMode} onChange={onViewModeChange} />
       </div>
-
       <div style={{ background: COLORS.text, borderRadius: 16, padding: 24, marginBottom: 20, position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", top: -20, right: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(212,168,83,0.12)" }} />
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4, letterSpacing: 1, textTransform: "uppercase" }}>Net Position</div>
@@ -267,7 +264,6 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
           </div>
         </div>
       </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[
           { name: "Gabriel 🌱", inc: gabrielIncome, exp: gabrielExpenses, color: COLORS.gabriel },
@@ -282,11 +278,10 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
           </div>
         ))}
       </div>
-
       {topCats.length > 0 && (
         <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 14 }}>Top spending categories</div>
-          {topCats.map(([cat, amt]) => (
+          {topCats.map(([cat, amt]: any) => (
             <div key={cat} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ fontSize: 12, color: COLORS.text }}>{cat}</span>
@@ -299,7 +294,6 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
           ))}
         </div>
       )}
-
       {income > 0 && (
         <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 4 }}>Healthy money allocation guide</div>
@@ -319,8 +313,8 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
   );
 }
 
-function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange }) {
-  const sorted = [...filteredTx].sort((a, b) => new Date(b.date) - new Date(a.date));
+function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange }: any) {
+  const sorted = [...filteredTx].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return (
     <div style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
@@ -330,7 +324,7 @@ function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMon
       {sorted.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60, color: COLORS.muted, fontStyle: "italic" }}>No transactions yet this month</div>
       ) : (
-        sorted.map(t => (
+        sorted.map((t: any) => (
           <div key={t.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div style={{ flex: 1 }}>
@@ -357,14 +351,13 @@ function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMon
   );
 }
 
-function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }) {
-  const [contributing, setContributing] = useState(null);
+function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
+  const [contributing, setContributing] = useState<any>(null);
   const [amount, setAmount] = useState("");
+  const familyGoals = goals.filter((g: any) => g.type === "Family Goal");
+  const personalGoals = goals.filter((g: any) => g.type === "Personal Goal" && g.createdBy === user);
 
-  const familyGoals = goals.filter(g => g.type === "Family Goal");
-  const personalGoals = goals.filter(g => g.type === "Personal Goal" && g.createdBy === user);
-
-  const GoalCard = ({ g }) => {
+  const GoalCard = ({ g }: any) => {
     const pct = Math.min(100, ((g.saved || 0) / g.target) * 100);
     return (
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
@@ -402,28 +395,24 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }) {
         <div style={{ fontSize: 18, color: COLORS.text }}>Goals</div>
         <button onClick={onAddGoal} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "'Georgia', serif" }}>+ New goal</button>
       </div>
-
       {familyGoals.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Family goals</div>
-          {familyGoals.map(g => <GoalCard key={g.id} g={g} />)}
+          {familyGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
         </>
       )}
-
       {personalGoals.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", margin: "20px 0 12px" }}>My personal goals</div>
-          {personalGoals.map(g => <GoalCard key={g.id} g={g} />)}
+          {personalGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
         </>
       )}
-
       {goals.length === 0 && (
         <div style={{ textAlign: "center", padding: 60, color: COLORS.muted }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>🎯</div>
           <div style={{ fontStyle: "italic" }}>No goals yet. Add your first one — a trip to Europe, building a home...</div>
         </div>
       )}
-
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginTop: 24 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 12 }}>Proven savings strategies</div>
         {[
@@ -446,12 +435,10 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }) {
   );
 }
 
-function AddTransactionModal({ onAdd, onClose, user }) {
+function AddTransactionModal({ onAdd, onClose, user }: any) {
   const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "" });
-  const cats = CATEGORIES[form.type];
-
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v][0] } : {}) }));
-
+  const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
@@ -459,7 +446,6 @@ function AddTransactionModal({ onAdd, onClose, user }) {
           <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>Add transaction</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
         </div>
-
         <div style={{ display: "flex", background: COLORS.border, borderRadius: 10, padding: 3, marginBottom: 20 }}>
           {["expense", "income"].map(t => (
             <button key={t} onClick={() => set("type", t)} style={{
@@ -470,10 +456,9 @@ function AddTransactionModal({ onAdd, onClose, user }) {
             }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
           ))}
         </div>
-
         {[
           { label: "Amount (USD)", el: <input type="number" value={form.amount} onChange={e => set("amount", e.target.value)} placeholder="0.00" style={inputStyle} /> },
-          { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map(c => <option key={c}>{c}</option>)}</select> },
+          { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map((c: string) => <option key={c}>{c}</option>)}</select> },
           { label: "Date", el: <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={inputStyle} /> },
           { label: "Description (optional)", el: <input type="text" value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Saturday market" style={inputStyle} /> },
         ].map(({ label, el }) => (
@@ -482,7 +467,6 @@ function AddTransactionModal({ onAdd, onClose, user }) {
             {el}
           </div>
         ))}
-
         <button onClick={() => { if (form.amount) onAdd(form); }} style={{
           width: "100%", background: COLORS.text, color: "#fff", border: "none",
           borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
@@ -493,10 +477,9 @@ function AddTransactionModal({ onAdd, onClose, user }) {
   );
 }
 
-function AddGoalModal({ onAdd, onClose, user }) {
+function AddGoalModal({ onAdd, onClose, user }: any) {
   const [form, setForm] = useState({ name: "", target: "", type: "Family Goal", deadline: "" });
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto" }}>
@@ -504,7 +487,6 @@ function AddGoalModal({ onAdd, onClose, user }) {
           <div style={{ fontSize: 16, fontWeight: 500 }}>New goal</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
         </div>
-
         {[
           { label: "Goal name", el: <input type="text" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Europe trip, Build our home" style={inputStyle} /> },
           { label: "Target amount (USD)", el: <input type="number" value={form.target} onChange={e => set("target", e.target.value)} placeholder="10000" style={inputStyle} /> },
@@ -516,7 +498,6 @@ function AddGoalModal({ onAdd, onClose, user }) {
             {el}
           </div>
         ))}
-
         <button onClick={() => { if (form.name && form.target) onAdd(form); }} style={{
           width: "100%", background: COLORS.text, color: "#fff", border: "none",
           borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
@@ -527,7 +508,7 @@ function AddGoalModal({ onAdd, onClose, user }) {
   );
 }
 
-function BottomNav({ tab, onTab, onAdd }) {
+function BottomNav({ tab, onTab, onAdd }: any) {
   const tabs = [
     { id: "dashboard", label: "Overview", icon: "◉" },
     { id: "transactions", label: "Entries", icon: "≡" },
@@ -536,8 +517,8 @@ function BottomNav({ tab, onTab, onAdd }) {
   return (
     <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: COLORS.card, borderTop: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", padding: "8px 0 20px", zIndex: 10 }}>
       {tabs.map((t, i) => (
-        <>
-          <button key={t.id} onClick={() => onTab(t.id)} style={{
+        <div key={t.id} style={{ display: "contents" }}>
+          <button onClick={() => onTab(t.id)} style={{
             flex: 1, background: "none", border: "none", cursor: "pointer", padding: "6px 0",
             display: "flex", flexDirection: "column", alignItems: "center", gap: 3
           }}>
@@ -552,13 +533,13 @@ function BottomNav({ tab, onTab, onAdd }) {
               boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10
             }}>+</button>
           )}
-        </>
+        </div>
       ))}
     </div>
   );
 }
 
-const inputStyle = {
+const inputStyle: any = {
   width: "100%", border: `1px solid #e8e4dc`, borderRadius: 8,
   padding: "10px 12px", fontSize: 14, fontFamily: "'Georgia', serif",
   boxSizing: "border-box", background: "#faf8f4", color: "#1a1a1a"
