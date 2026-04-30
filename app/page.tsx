@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "../lib/supabase";
 
 const USERS = { gabriel: "Gabriel", steph: "Steph" };
 
@@ -31,16 +32,6 @@ const currentMonth = () => monthKey(today());
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
-function loadFromStorage(key: string) {
-  if (typeof window === "undefined") return null;
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
-}
-
-function saveToStorage(key: string, value: any) {
-  if (typeof window === "undefined") return;
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-}
-
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [tab, setTab] = useState("dashboard");
@@ -53,57 +44,53 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth());
   const [viewMode, setViewMode] = useState("family");
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
     setLoading(true);
-    const tx = loadFromStorage("familia_transactions");
-    const g = loadFromStorage("familia_goals");
-    if (tx) setTransactions(tx);
-    if (g) setGoals(g);
+    try {
+      const [{ data: txData }, { data: goalData }] = await Promise.all([
+        supabase.from("transactions").select("*").order("created_at", { ascending: false }),
+        supabase.from("goals").select("*").order("created_at", { ascending: true })
+      ]);
+      if (txData) setTransactions(txData.map((t: any) => ({ ...t, createdBy: t.created_by, createdAt: t.created_at })));
+      if (goalData) setGoals(goalData.map((g: any) => ({ ...g, createdBy: g.created_by, createdAt: g.created_at })));
+    } catch (e) {}
     setLoading(false);
   }, []);
 
   useEffect(() => { if (user) loadData(); }, [user, loadData]);
 
-  const saveTransactions = (tx: any[]) => {
+  const addTransaction = async (t: any) => {
     setSaving(true);
-    saveToStorage("familia_transactions", tx);
+    const newTx = { id: generateId(), type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, created_by: user, created_at: new Date().toISOString() };
+    await supabase.from("transactions").insert(newTx);
+    setTransactions(prev => [{ ...newTx, createdBy: user }, ...prev]);
     setSaving(false);
-  };
-
-  const saveGoals = (g: any[]) => {
-    saveToStorage("familia_goals", g);
-  };
-
-  const addTransaction = (t: any) => {
-    const updated = [{ ...t, id: generateId(), createdBy: user, createdAt: new Date().toISOString() }, ...transactions];
-    setTransactions(updated);
-    saveTransactions(updated);
     setShowAdd(false);
   };
 
-  const deleteTransaction = (id: string) => {
-    const updated = transactions.filter((t: any) => t.id !== id);
-    setTransactions(updated);
-    saveTransactions(updated);
+  const deleteTransaction = async (id: string) => {
+    await supabase.from("transactions").delete().eq("id", id);
+    setTransactions(prev => prev.filter((t: any) => t.id !== id));
   };
 
-  const addGoal = (g: any) => {
-    const updated = [...goals, { ...g, id: generateId(), createdBy: user, saved: 0, createdAt: new Date().toISOString() }];
-    setGoals(updated);
-    saveGoals(updated);
+  const addGoal = async (g: any) => {
+    const newGoal = { id: generateId(), name: g.name, target: g.target, saved: 0, type: g.type, deadline: g.deadline, created_by: user, created_at: new Date().toISOString() };
+    await supabase.from("goals").insert(newGoal);
+    setGoals(prev => [...prev, { ...newGoal, createdBy: user }]);
     setShowAddGoal(false);
   };
 
-  const updateGoalSaved = (id: string, amount: any) => {
-    const updated = goals.map((g: any) => g.id === id ? { ...g, saved: Math.max(0, (g.saved || 0) + Number(amount)) } : g);
-    setGoals(updated);
-    saveGoals(updated);
+  const updateGoalSaved = async (id: string, amount: any) => {
+    const goal = goals.find((g: any) => g.id === id);
+    if (!goal) return;
+    const newSaved = Math.max(0, (goal.saved || 0) + Number(amount));
+    await supabase.from("goals").update({ saved: newSaved }).eq("id", id);
+    setGoals(prev => prev.map((g: any) => g.id === id ? { ...g, saved: newSaved } : g));
   };
 
-  const deleteGoal = (id: string) => {
-    const updated = goals.filter((g: any) => g.id !== id);
-    setGoals(updated);
-    saveGoals(updated);
+  const deleteGoal = async (id: string) => {
+    await supabase.from("goals").delete().eq("id", id);
+    setGoals(prev => prev.filter((g: any) => g.id !== id));
   };
 
   const filteredTx = transactions.filter((t: any) => {
@@ -234,7 +221,7 @@ function ViewToggle({ viewMode, onChange }: any) {
   );
 }
 
-function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user }: any) {
+function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user }: any) {
   const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
   const maxCat = (topCats[0] as any)?.[1] || 1;
   const budgetGuide = [
@@ -364,7 +351,7 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 500, color: COLORS.text, marginBottom: 2 }}>{g.name}</div>
-            <div style={{ fontSize: 11, color: COLORS.muted }}>{g.type} {g.type === "Personal Goal" ? `· ${g.createdBy === "gabriel" ? "🌱" : "🌸"}` : ""}</div>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>{g.type}{g.type === "Personal Goal" ? ` · ${g.createdBy === "gabriel" ? "🌱" : "🌸"}` : ""}</div>
           </div>
           <button onClick={() => onDelete(g.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16 }}>×</button>
         </div>
