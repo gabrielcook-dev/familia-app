@@ -130,7 +130,7 @@ export default function App() {
   const stephExpenses = filteredTx.filter((t: any) => t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
   const months = [...new Set(transactions.map((t: any) => monthKey(t.date)))].sort().reverse();
-  if (!months.includes(currentMonth())) months.unshift(currentMonth());
+  const now = currentMonth(); if (!months.includes(now)) months.unshift(now); const prevMonth = monthKey(new Date(new Date().setMonth(new Date().getMonth()-1)).toISOString()); if (!months.includes(prevMonth)) months.push(prevMonth);
 
   if (!user) return <LoginScreen onLogin={setUser} />;
 
