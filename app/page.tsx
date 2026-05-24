@@ -56,7 +56,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth());
+  const [selectedMonth, setSelectedMonth] = useState("2026-05");
   const [viewMode, setViewMode] = useState("family");
 
   const loadData = useCallback(async () => {
