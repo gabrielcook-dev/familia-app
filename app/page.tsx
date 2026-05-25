@@ -34,9 +34,7 @@ function generateId() { return Date.now().toString(36) + Math.random().toString(
 
 function exportToCSV(transactions: any[]) {
   const headers = ["Date", "Type", "Category", "Description", "Amount", "Added By"];
-  const rows = transactions.map(t => [
-    t.date, t.type, t.category, t.description || "", t.amount, t.createdBy === "gabriel" ? "Gabriel" : "Steph"
-  ]);
+  const rows = transactions.map(t => [t.date, t.type, t.category, t.description || "", t.amount, t.createdBy === "gabriel" ? "Gabriel" : "Steph"]);
   const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -45,6 +43,14 @@ function exportToCSV(transactions: any[]) {
   a.download = `familia-finances-${currentMonth()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function getMonths(transactions: any[]) {
+  const fromTx = [...new Set(transactions.map((t: any) => monthKey(t.date)))];
+  const now = currentMonth();
+  const prev = monthKey(new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString());
+  const all = [...new Set([now, prev, ...fromTx])].sort().reverse();
+  return all;
 }
 
 export default function App() {
@@ -118,10 +124,11 @@ export default function App() {
   };
 
   const filteredTx = transactions.filter((t: any) => {
-    const inMonth = monthKey(t.date) === selectedMonth;
-    if (!inMonth) return false;
+    if (monthKey(t.date) !== selectedMonth) return false;
     if (viewMode === "family") return true;
-    return t.createdBy === user;
+    if (viewMode === "mine") return t.createdBy === user;
+    if (viewMode === "other") return t.createdBy !== user;
+    return true;
   });
 
   const income = filteredTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
@@ -133,13 +140,14 @@ export default function App() {
     return acc;
   }, {});
 
-  const gabrielIncome = filteredTx.filter((t: any) => t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const stephIncome = filteredTx.filter((t: any) => t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const gabrielExpenses = filteredTx.filter((t: any) => t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const stephExpenses = filteredTx.filter((t: any) => t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const gabrielIncome = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephIncome = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const gabrielExpenses = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephExpenses = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
-  const months = [...new Set(transactions.map((t: any) => monthKey(t.date)))].sort().reverse();
-  const now = currentMonth(); if (!months.includes(now)) months.unshift(now); const prevMonth = monthKey(new Date(new Date().setMonth(new Date().getMonth()-1)).toISOString()); if (!months.includes(prevMonth)) months.push(prevMonth);
+  const months = getMonths(transactions);
+  const otherUser = user === "gabriel" ? "steph" : "gabriel";
+  const otherName = user === "gabriel" ? "Steph" : "Gabriel";
 
   if (!user) return <LoginScreen onLogin={setUser} />;
 
@@ -154,16 +162,14 @@ export default function App() {
             <Dashboard income={income} expenses={expenses} net={net}
               gabrielIncome={gabrielIncome} stephIncome={stephIncome}
               gabrielExpenses={gabrielExpenses} stephExpenses={stephExpenses}
-              byCategory={byCategory} filteredTx={filteredTx}
-              selectedMonth={selectedMonth} months={months}
-              onMonthChange={setSelectedMonth}
-              viewMode={viewMode} onViewModeChange={setViewMode} user={user}
-              onExport={() => exportToCSV(transactions)} />
+              byCategory={byCategory} selectedMonth={selectedMonth} months={months}
+              onMonthChange={setSelectedMonth} viewMode={viewMode} onViewModeChange={setViewMode}
+              user={user} otherName={otherName} onExport={() => exportToCSV(transactions)} />
           )}
           {tab === "transactions" && (
             <Transactions filteredTx={filteredTx} onDelete={deleteTransaction} onEdit={setEditingTx} user={user}
               selectedMonth={selectedMonth} months={months} onMonthChange={setSelectedMonth}
-              viewMode={viewMode} onViewModeChange={setViewMode}
+              viewMode={viewMode} onViewModeChange={setViewMode} otherName={otherName}
               onExport={() => exportToCSV(filteredTx)} />
           )}
           {tab === "goals" && (
@@ -198,9 +204,6 @@ function LoginScreen({ onLogin }: any) {
           </button>
         ))}
       </div>
-      <p style={{ color: COLORS.muted, fontSize: 12, marginTop: 32, textAlign: "center", lineHeight: 1.7 }}>
-        Data is shared in real time.<br />Both of you see the same picture.
-      </p>
     </div>
   );
 }
@@ -233,22 +236,28 @@ function MonthPicker({ months, selected, onChange }: any) {
   );
 }
 
-function ViewToggle({ viewMode, onChange }: any) {
+function ViewToggle({ viewMode, onChange, user, otherName }: any) {
+  const myName = user === "gabriel" ? "Gabriel" : "Steph";
+  const options = [
+    { id: "family", label: "Family" },
+    { id: "mine", label: myName },
+    { id: "other", label: otherName },
+  ];
   return (
     <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2 }}>
-      {["family", "mine"].map(v => (
-        <button key={v} onClick={() => onChange(v)} style={{
-          background: viewMode === v ? COLORS.card : "transparent",
-          border: "none", borderRadius: 6, padding: "5px 12px",
-          fontSize: 12, cursor: "pointer", color: viewMode === v ? COLORS.text : COLORS.muted,
+      {options.map(v => (
+        <button key={v.id} onClick={() => onChange(v.id)} style={{
+          background: viewMode === v.id ? COLORS.card : "transparent",
+          border: "none", borderRadius: 6, padding: "5px 8px",
+          fontSize: 11, cursor: "pointer", color: viewMode === v.id ? COLORS.text : COLORS.muted,
           fontFamily: "'Georgia', serif", transition: "all 0.15s"
-        }}>{v === "family" ? "Family" : "Mine"}</button>
+        }}>{v.label}</button>
       ))}
     </div>
   );
 }
 
-function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, onExport }: any) {
+function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, otherName, onExport }: any) {
   const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
   const maxCat = (topCats[0] as any)?.[1] || 1;
   const budgetGuide = [
@@ -259,11 +268,11 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
   ];
   return (
     <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <MonthPicker months={months} selected={selectedMonth} onChange={onMonthChange} />
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ViewToggle viewMode={viewMode} onChange={onViewModeChange} />
-          <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ Export</button>
+          <ViewToggle viewMode={viewMode} onChange={onViewModeChange} user={user} otherName={otherName} />
+          <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ CSV</button>
         </div>
       </div>
       <div style={{ background: COLORS.text, borderRadius: 16, padding: 24, marginBottom: 20, position: "relative", overflow: "hidden" }}>
@@ -330,15 +339,15 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
   );
 }
 
-function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, onExport }: any) {
+function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, otherName, onExport }: any) {
   const sorted = [...filteredTx].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return (
     <div style={{ padding: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <MonthPicker months={months} selected={selectedMonth} onChange={onMonthChange} />
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ViewToggle viewMode={viewMode} onChange={onViewModeChange} />
-          <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ Export</button>
+          <ViewToggle viewMode={viewMode} onChange={onViewModeChange} user={user} otherName={otherName} />
+          <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ CSV</button>
         </div>
       </div>
       {sorted.length === 0 ? (
@@ -350,7 +359,7 @@ function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, month
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 10, background: t.type === "income" ? "#e8f5ee" : "#fdecea", color: t.type === "income" ? COLORS.income : COLORS.expense, borderRadius: 4, padding: "2px 6px", fontWeight: 500 }}>{t.type}</span>
-                  <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱" : "🌸"}</span>
+                  <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱 Gabriel" : "🌸 Steph"}</span>
                 </div>
                 <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
                 <div style={{ fontSize: 11, color: COLORS.muted }}>{t.category} · {t.date}</div>
@@ -376,7 +385,6 @@ function EditTransactionModal({ tx, onSave, onClose }: any) {
   const [form, setForm] = useState({ type: tx.type, amount: tx.amount, category: tx.category, description: tx.description || "", date: tx.date });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
-
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
@@ -480,10 +488,10 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginTop: 24 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 12 }}>Proven savings strategies</div>
         {[
-          { emoji: "🏦", title: "Emergency fund first", desc: "6 months of expenses in a separate account. Never touch it except for emergencies." },
+          { emoji: "🏦", title: "Emergency fund first", desc: "6 months of expenses in a separate account." },
           { emoji: "✈️", title: "Vacation fund", desc: "5% of net income monthly into a dedicated travel account." },
           { emoji: "🏠", title: "Home fund", desc: "10–20% of net income toward your down payment or build fund." },
-          { emoji: "📈", title: "Investment rule", desc: "Minimum 10% of net income invested — index funds, real estate, or business." },
+          { emoji: "📈", title: "Investment rule", desc: "Minimum 10% of net income invested." },
           { emoji: "💰", title: "Pay yourself first", desc: "Automate transfers on payday before spending anything." }
         ].map(s => (
           <div key={s.title} style={{ display: "flex", gap: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${COLORS.border}` }}>
