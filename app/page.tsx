@@ -56,7 +56,8 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState("2026-05");
+  const [editingTx, setEditingTx] = useState<any>(null);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth());
   const [viewMode, setViewMode] = useState("family");
 
   const loadData = useCallback(async () => {
@@ -81,6 +82,14 @@ export default function App() {
     setTransactions(prev => [{ ...newTx, createdBy: user }, ...prev]);
     setSaving(false);
     setShowAdd(false);
+  };
+
+  const updateTransaction = async (id: string, updates: any) => {
+    setSaving(true);
+    await supabase.from("transactions").update(updates).eq("id", id);
+    setTransactions(prev => prev.map((t: any) => t.id === id ? { ...t, ...updates } : t));
+    setSaving(false);
+    setEditingTx(null);
   };
 
   const deleteTransaction = async (id: string) => {
@@ -152,7 +161,7 @@ export default function App() {
               onExport={() => exportToCSV(transactions)} />
           )}
           {tab === "transactions" && (
-            <Transactions filteredTx={filteredTx} onDelete={deleteTransaction} user={user}
+            <Transactions filteredTx={filteredTx} onDelete={deleteTransaction} onEdit={setEditingTx} user={user}
               selectedMonth={selectedMonth} months={months} onMonthChange={setSelectedMonth}
               viewMode={viewMode} onViewModeChange={setViewMode}
               onExport={() => exportToCSV(filteredTx)} />
@@ -165,6 +174,7 @@ export default function App() {
       <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowAdd(true)} />
       {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} />}
       {showAddGoal && <AddGoalModal onAdd={addGoal} onClose={() => setShowAddGoal(false)} user={user} />}
+      {editingTx && <EditTransactionModal tx={editingTx} onSave={updateTransaction} onClose={() => setEditingTx(null)} />}
     </div>
   );
 }
@@ -320,7 +330,7 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
   );
 }
 
-function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, onExport }: any) {
+function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, onExport }: any) {
   const sorted = [...filteredTx].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return (
     <div style={{ padding: 20 }}>
@@ -345,10 +355,11 @@ function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMon
                 <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
                 <div style={{ fontSize: 11, color: COLORS.muted }}>{t.category} · {t.date}</div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ fontSize: 16, fontWeight: 500, color: t.type === "income" ? COLORS.income : COLORS.expense }}>
                   {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
                 </div>
+                <button onClick={() => onEdit(t)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", color: COLORS.muted, fontSize: 12, padding: "2px 6px" }}>✎</button>
                 {t.createdBy === user && (
                   <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
                 )}
@@ -357,6 +368,49 @@ function Transactions({ filteredTx, onDelete, user, selectedMonth, months, onMon
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+function EditTransactionModal({ tx, onSave, onClose }: any) {
+  const [form, setForm] = useState({ type: tx.type, amount: tx.amount, category: tx.category, description: tx.description || "", date: tx.date });
+  const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
+      <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>Edit transaction</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
+        </div>
+        <div style={{ display: "flex", background: COLORS.border, borderRadius: 10, padding: 3, marginBottom: 20 }}>
+          {["expense", "income"].map(t => (
+            <button key={t} onClick={() => set("type", t)} style={{
+              flex: 1, background: form.type === t ? COLORS.card : "transparent",
+              border: "none", borderRadius: 8, padding: "8px", fontSize: 14,
+              cursor: "pointer", color: form.type === t ? (t === "income" ? COLORS.income : COLORS.expense) : COLORS.muted,
+              fontFamily: "'Georgia', serif", fontWeight: form.type === t ? 500 : 400
+            }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+          ))}
+        </div>
+        {[
+          { label: "Amount (USD)", el: <input type="number" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} placeholder="0.00" style={inputStyle} /> },
+          { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map((c: string) => <option key={c}>{c}</option>)}</select> },
+          { label: "Date", el: <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={inputStyle} /> },
+          { label: "Description (optional)", el: <input type="text" value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Saturday market" style={inputStyle} /> },
+        ].map(({ label, el }) => (
+          <div key={label} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>{label}</div>
+            {el}
+          </div>
+        ))}
+        <button onClick={() => { if (form.amount) onSave(tx.id, form); }} style={{
+          width: "100%", background: COLORS.gabriel, color: "#fff", border: "none",
+          borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
+          fontFamily: "'Georgia', serif", marginTop: 8
+        }}>Save changes</button>
+      </div>
     </div>
   );
 }
