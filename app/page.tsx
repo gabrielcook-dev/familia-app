@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase";
 const USERS = { gabriel: "Gabriel", steph: "Steph" };
 
 const CATEGORIES = {
-  expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Transportation", "Motorbike", "Kids", "Medical", "Clothing", "Cleaning", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business", "Other"],
+  expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Gas", "Taxi", "Motorbike", "Kids", "Aniel", "Medical", "Clothing", "Cleaning/Nanny", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business/SS", "Other"],
   income: ["Dr. Tena / Coaching", "Sound Journey", "ECG Creations", "Vibraçao", "Freelance", "Other Income"]
 };
 
