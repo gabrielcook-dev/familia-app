@@ -12,16 +12,8 @@ const CATEGORIES = {
 const GOAL_TYPES = ["Family Goal", "Personal Goal"];
 
 const COLORS = {
-  gabriel: "#1a6b4a",
-  steph: "#8b4a8b",
-  income: "#1a6b4a",
-  expense: "#c0392b",
-  bg: "#faf8f4",
-  card: "#ffffff",
-  accent: "#d4a853",
-  text: "#1a1a1a",
-  muted: "#6b6b6b",
-  border: "#e8e4dc"
+  gabriel: "#1a6b4a", steph: "#8b4a8b", income: "#1a6b4a", expense: "#c0392b",
+  bg: "#faf8f4", card: "#ffffff", accent: "#d4a853", text: "#1a1a1a", muted: "#6b6b6b", border: "#e8e4dc"
 };
 
 const fmt = (n: any) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -31,6 +23,23 @@ const monthKey = (d: any) => d.slice(0, 7);
 const currentMonth = () => monthKey(today());
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+
+function getLast6Months() {
+  const months = [];
+  const now = new Date();
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return months;
+}
+
+function getMonths(transactions: any[]) {
+  const fromTx = transactions.map((t: any) => monthKey(t.date));
+  const last6 = getLast6Months();
+  const all = [...new Set([...last6, ...fromTx])].sort().reverse();
+  return all;
+}
 
 function exportToCSV(transactions: any[]) {
   const headers = ["Date", "Type", "Category", "Description", "Amount", "Added By"];
@@ -43,14 +52,6 @@ function exportToCSV(transactions: any[]) {
   a.download = `familia-finances-${currentMonth()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-function getMonths(transactions: any[]) {
-  const fromTx = [...new Set(transactions.map((t: any) => monthKey(t.date)))];
-  const now = currentMonth();
-  const prev = monthKey(new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString());
-  const all = [...new Set([now, prev, ...fromTx])].sort().reverse();
-  return all;
 }
 
 export default function App() {
@@ -140,13 +141,13 @@ export default function App() {
     return acc;
   }, {});
 
-  const gabrielIncome = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const stephIncome = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const gabrielExpenses = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const stephExpenses = transactions.filter((t: any) => monthKey(t.date) === selectedMonth && t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const allMonthTx = transactions.filter((t: any) => monthKey(t.date) === selectedMonth);
+  const gabrielIncome = allMonthTx.filter((t: any) => t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephIncome = allMonthTx.filter((t: any) => t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const gabrielExpenses = allMonthTx.filter((t: any) => t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephExpenses = allMonthTx.filter((t: any) => t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
   const months = getMonths(transactions);
-  const otherUser = user === "gabriel" ? "steph" : "gabriel";
   const otherName = user === "gabriel" ? "Steph" : "Gabriel";
 
   if (!user) return <LoginScreen onLogin={setUser} />;
@@ -162,7 +163,8 @@ export default function App() {
             <Dashboard income={income} expenses={expenses} net={net}
               gabrielIncome={gabrielIncome} stephIncome={stephIncome}
               gabrielExpenses={gabrielExpenses} stephExpenses={stephExpenses}
-              byCategory={byCategory} selectedMonth={selectedMonth} months={months}
+              byCategory={byCategory} filteredTx={filteredTx}
+              selectedMonth={selectedMonth} months={months}
               onMonthChange={setSelectedMonth} viewMode={viewMode} onViewModeChange={setViewMode}
               user={user} otherName={otherName} onExport={() => exportToCSV(transactions)} />
           )}
@@ -189,7 +191,7 @@ function LoginScreen({ onLogin }: any) {
   return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div style={{ marginBottom: 12, fontSize: 40 }}>🌿</div>
-      <h1 style={{ fontFamily: "'Georgia', serif", fontSize: 26, fontWeight: 400, color: COLORS.text, margin: "0 0 6px", letterSpacing: -0.5 }}>Familia</h1>
+      <h1 style={{ fontFamily: "'Georgia', serif", fontSize: 26, fontWeight: 400, color: COLORS.text, margin: "0 0 6px" }}>Familia</h1>
       <p style={{ color: COLORS.muted, fontSize: 14, margin: "0 0 40px", textAlign: "center", lineHeight: 1.6 }}>Your shared family finance tracker</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%", maxWidth: 280 }}>
         {Object.entries(USERS).map(([key, name]) => (
@@ -197,7 +199,7 @@ function LoginScreen({ onLogin }: any) {
             background: key === "gabriel" ? COLORS.gabriel : COLORS.steph,
             color: "#fff", border: "none", borderRadius: 12, padding: "16px 24px",
             fontSize: 16, fontFamily: "'Georgia', serif", cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 12, letterSpacing: 0.3
+            display: "flex", alignItems: "center", gap: 12
           }}>
             <span style={{ fontSize: 22 }}>{key === "gabriel" ? "🌱" : "🌸"}</span>
             <span>I'm {name}</span>
@@ -228,8 +230,7 @@ function MonthPicker({ months, selected, onChange }: any) {
   return (
     <select value={selected} onChange={e => onChange(e.target.value)} style={{
       border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 10px",
-      fontSize: 13, background: COLORS.card, color: COLORS.text, cursor: "pointer",
-      fontFamily: "'Georgia', serif"
+      fontSize: 13, background: COLORS.card, color: COLORS.text, cursor: "pointer", fontFamily: "'Georgia', serif"
     }}>
       {months.map((m: string) => <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>)}
     </select>
@@ -250,15 +251,48 @@ function ViewToggle({ viewMode, onChange, user, otherName }: any) {
           background: viewMode === v.id ? COLORS.card : "transparent",
           border: "none", borderRadius: 6, padding: "5px 8px",
           fontSize: 11, cursor: "pointer", color: viewMode === v.id ? COLORS.text : COLORS.muted,
-          fontFamily: "'Georgia', serif", transition: "all 0.15s"
+          fontFamily: "'Georgia', serif", transition: "all 0.15s", whiteSpace: "nowrap"
         }}>{v.label}</button>
       ))}
     </div>
   );
 }
 
-function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, otherName, onExport }: any) {
-  const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 6);
+function CategoryRow({ cat, amt, maxCat, txList }: any) {
+  const [open, setOpen] = useState(false);
+  const catTx = txList.filter((t: any) => t.category === cat && t.type === "expense");
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ cursor: "pointer" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 12, color: COLORS.text }}>{cat} {open ? "▲" : "▼"}</span>
+          <span style={{ fontSize: 12, color: COLORS.muted }}>{fmt(amt)}</span>
+        </div>
+        <div style={{ height: 4, background: COLORS.border, borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${(amt / maxCat) * 100}%`, background: COLORS.accent, borderRadius: 2 }} />
+        </div>
+      </div>
+      {open && (
+        <div style={{ marginTop: 8, borderLeft: `3px solid ${COLORS.accent}`, paddingLeft: 10 }}>
+          {catTx.length === 0 ? (
+            <div style={{ fontSize: 11, color: COLORS.muted, fontStyle: "italic" }}>No entries</div>
+          ) : catTx.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((t: any) => (
+            <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.text }}>{t.description || t.category}</div>
+                <div style={{ fontSize: 10, color: COLORS.muted }}>{t.date} · {t.createdBy === "gabriel" ? "🌱" : "🌸"}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.expense }}>-{fmt(t.amount)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, otherName, onExport }: any) {
+  const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 8);
   const maxCat = (topCats[0] as any)?.[1] || 1;
   const budgetGuide = [
     { label: "Needs (50%)", target: income * 0.5, color: "#4a9b7f" },
@@ -270,7 +304,7 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
     <div style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <MonthPicker months={months} selected={selectedMonth} onChange={onMonthChange} />
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <ViewToggle viewMode={viewMode} onChange={onViewModeChange} user={user} otherName={otherName} />
           <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ CSV</button>
         </div>
@@ -306,17 +340,10 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
       </div>
       {topCats.length > 0 && (
         <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 14 }}>Top spending categories</div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.text, marginBottom: 4 }}>Top spending categories</div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 14 }}>Tap a category to see its entries</div>
           {topCats.map(([cat, amt]: any) => (
-            <div key={cat} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: COLORS.text }}>{cat}</span>
-                <span style={{ fontSize: 12, color: COLORS.muted }}>{fmt(amt)}</span>
-              </div>
-              <div style={{ height: 4, background: COLORS.border, borderRadius: 2, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${(amt / maxCat) * 100}%`, background: COLORS.accent, borderRadius: 2, transition: "width 0.4s" }} />
-              </div>
-            </div>
+            <CategoryRow key={cat} cat={cat} amt={amt} maxCat={maxCat} txList={filteredTx} />
           ))}
         </div>
       )}
@@ -345,38 +372,36 @@ function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, month
     <div style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <MonthPicker months={months} selected={selectedMonth} onChange={onMonthChange} />
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <ViewToggle viewMode={viewMode} onChange={onViewModeChange} user={user} otherName={otherName} />
           <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ CSV</button>
         </div>
       </div>
       {sorted.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60, color: COLORS.muted, fontStyle: "italic" }}>No transactions yet this month</div>
-      ) : (
-        sorted.map((t: any) => (
-          <div key={t.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, background: t.type === "income" ? "#e8f5ee" : "#fdecea", color: t.type === "income" ? COLORS.income : COLORS.expense, borderRadius: 4, padding: "2px 6px", fontWeight: 500 }}>{t.type}</span>
-                  <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱 Gabriel" : "🌸 Steph"}</span>
-                </div>
-                <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
-                <div style={{ fontSize: 11, color: COLORS.muted }}>{t.category} · {t.date}</div>
+      ) : sorted.map((t: any) => (
+        <div key={t.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 10, background: t.type === "income" ? "#e8f5ee" : "#fdecea", color: t.type === "income" ? COLORS.income : COLORS.expense, borderRadius: 4, padding: "2px 6px", fontWeight: 500 }}>{t.type}</span>
+                <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱 Gabriel" : "🌸 Steph"}</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ fontSize: 16, fontWeight: 500, color: t.type === "income" ? COLORS.income : COLORS.expense }}>
-                  {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
-                </div>
-                <button onClick={() => onEdit(t)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", color: COLORS.muted, fontSize: 12, padding: "2px 6px" }}>✎</button>
-                {t.createdBy === user && (
-                  <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
-                )}
+              <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
+              <div style={{ fontSize: 11, color: COLORS.muted }}>{t.category} · {t.date}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 16, fontWeight: 500, color: t.type === "income" ? COLORS.income : COLORS.expense }}>
+                {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
               </div>
+              <button onClick={() => onEdit(t)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", color: COLORS.muted, fontSize: 12, padding: "2px 6px" }}>✎</button>
+              {t.createdBy === user && (
+                <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
+              )}
             </div>
           </div>
-        ))
-      )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -395,15 +420,14 @@ function EditTransactionModal({ tx, onSave, onClose }: any) {
         <div style={{ display: "flex", background: COLORS.border, borderRadius: 10, padding: 3, marginBottom: 20 }}>
           {["expense", "income"].map(t => (
             <button key={t} onClick={() => set("type", t)} style={{
-              flex: 1, background: form.type === t ? COLORS.card : "transparent",
-              border: "none", borderRadius: 8, padding: "8px", fontSize: 14,
+              flex: 1, background: form.type === t ? COLORS.card : "transparent", border: "none", borderRadius: 8, padding: "8px", fontSize: 14,
               cursor: "pointer", color: form.type === t ? (t === "income" ? COLORS.income : COLORS.expense) : COLORS.muted,
               fontFamily: "'Georgia', serif", fontWeight: form.type === t ? 500 : 400
             }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
           ))}
         </div>
         {[
-          { label: "Amount (USD)", el: <input type="number" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} placeholder="0.00" style={inputStyle} /> },
+          { label: "Amount (USD)", el: <input type="number" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} style={inputStyle} /> },
           { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map((c: string) => <option key={c}>{c}</option>)}</select> },
           { label: "Date", el: <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={inputStyle} /> },
           { label: "Description (optional)", el: <input type="text" value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Saturday market" style={inputStyle} /> },
@@ -413,11 +437,7 @@ function EditTransactionModal({ tx, onSave, onClose }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.amount) onSave(tx.id, form); }} style={{
-          width: "100%", background: COLORS.gabriel, color: "#fff", border: "none",
-          borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
-          fontFamily: "'Georgia', serif", marginTop: 8
-        }}>Save changes</button>
+        <button onClick={() => { if (form.amount) onSave(tx.id, form); }} style={{ width: "100%", background: COLORS.gabriel, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Save changes</button>
       </div>
     </div>
   );
@@ -467,22 +487,18 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
         <div style={{ fontSize: 18, color: COLORS.text }}>Goals</div>
         <button onClick={onAddGoal} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "'Georgia', serif" }}>+ New goal</button>
       </div>
-      {familyGoals.length > 0 && (
-        <>
-          <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Family goals</div>
-          {familyGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
-        </>
-      )}
-      {personalGoals.length > 0 && (
-        <>
-          <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", margin: "20px 0 12px" }}>My personal goals</div>
-          {personalGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
-        </>
-      )}
+      {familyGoals.length > 0 && (<>
+        <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Family goals</div>
+        {familyGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
+      </>)}
+      {personalGoals.length > 0 && (<>
+        <div style={{ fontSize: 12, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase", margin: "20px 0 12px" }}>My personal goals</div>
+        {personalGoals.map((g: any) => <GoalCard key={g.id} g={g} />)}
+      </>)}
       {goals.length === 0 && (
         <div style={{ textAlign: "center", padding: 60, color: COLORS.muted }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>🎯</div>
-          <div style={{ fontStyle: "italic" }}>No goals yet. Add your first one — a trip to Europe, building a home...</div>
+          <div style={{ fontStyle: "italic" }}>No goals yet. Add your first one!</div>
         </div>
       )}
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16, marginTop: 24 }}>
@@ -521,8 +537,7 @@ function AddTransactionModal({ onAdd, onClose, user }: any) {
         <div style={{ display: "flex", background: COLORS.border, borderRadius: 10, padding: 3, marginBottom: 20 }}>
           {["expense", "income"].map(t => (
             <button key={t} onClick={() => set("type", t)} style={{
-              flex: 1, background: form.type === t ? COLORS.card : "transparent",
-              border: "none", borderRadius: 8, padding: "8px", fontSize: 14,
+              flex: 1, background: form.type === t ? COLORS.card : "transparent", border: "none", borderRadius: 8, padding: "8px", fontSize: 14,
               cursor: "pointer", color: form.type === t ? (t === "income" ? COLORS.income : COLORS.expense) : COLORS.muted,
               fontFamily: "'Georgia', serif", fontWeight: form.type === t ? 500 : 400
             }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
@@ -539,11 +554,7 @@ function AddTransactionModal({ onAdd, onClose, user }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.amount) onAdd(form); }} style={{
-          width: "100%", background: COLORS.text, color: "#fff", border: "none",
-          borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
-          fontFamily: "'Georgia', serif", marginTop: 8
-        }}>Add transaction</button>
+        <button onClick={() => { if (form.amount) onAdd(form); }} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Add transaction</button>
       </div>
     </div>
   );
@@ -570,11 +581,7 @@ function AddGoalModal({ onAdd, onClose, user }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.name && form.target) onAdd(form); }} style={{
-          width: "100%", background: COLORS.text, color: "#fff", border: "none",
-          borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
-          fontFamily: "'Georgia', serif", marginTop: 8
-        }}>Create goal</button>
+        <button onClick={() => { if (form.name && form.target) onAdd(form); }} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Create goal</button>
       </div>
     </div>
   );
@@ -590,20 +597,12 @@ function BottomNav({ tab, onTab, onAdd }: any) {
     <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: COLORS.card, borderTop: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", padding: "8px 0 20px", zIndex: 10 }}>
       {tabs.map((t, i) => (
         <div key={t.id} style={{ display: "contents" }}>
-          <button onClick={() => onTab(t.id)} style={{
-            flex: 1, background: "none", border: "none", cursor: "pointer", padding: "6px 0",
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 3
-          }}>
+          <button onClick={() => onTab(t.id)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", padding: "6px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <span style={{ fontSize: 18, color: tab === t.id ? COLORS.text : COLORS.muted }}>{t.icon}</span>
             <span style={{ fontSize: 10, color: tab === t.id ? COLORS.text : COLORS.muted, fontFamily: "'Georgia', serif" }}>{t.label}</span>
           </button>
           {i === 1 && (
-            <button onClick={onAdd} style={{
-              width: 52, height: 52, borderRadius: "50%", background: COLORS.text,
-              border: "none", cursor: "pointer", color: "#fff", fontSize: 24,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10
-            }}>+</button>
+            <button onClick={onAdd} style={{ width: 52, height: 52, borderRadius: "50%", background: COLORS.text, border: "none", cursor: "pointer", color: "#fff", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10 }}>+</button>
           )}
         </div>
       ))}
