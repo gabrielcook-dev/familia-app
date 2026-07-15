@@ -20,7 +20,10 @@ const fmt = (n: any) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", {
 const fmtSigned = (n: any) => (n >= 0 ? "+" : "-") + fmt(n);
 const today = () => new Date().toISOString().split("T")[0];
 const monthKey = (d: any) => d.slice(0, 7);
-const currentMonth = () => monthKey(today());
+const currentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+};
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
@@ -28,7 +31,9 @@ function getLast6Months() {
   const months = [];
   const now = new Date();
   for (let i = 0; i < 6; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = now.getFullYear();
+    const month = now.getMonth() - i;
+    const d = new Date(year, month, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
   return months;
@@ -41,15 +46,19 @@ function getMonths(transactions: any[]) {
   return all;
 }
 
-function exportToCSV(transactions: any[]) {
+function exportToCSV(transactions: any[], selectedMonth: string) {
+  const filtered = transactions.filter((t: any) => monthKey(t.date) === selectedMonth);
   const headers = ["Date", "Type", "Category", "Description", "Amount", "Added By"];
-  const rows = transactions.map(t => [t.date, t.type, t.category, t.description || "", t.amount, t.createdBy === "gabriel" ? "Gabriel" : "Steph"]);
+  const rows = filtered.map((t: any) => [
+    t.date, t.type, t.category, (t.description || "").replace(/,/g, ";"), t.amount,
+    t.createdBy === "gabriel" ? "Gabriel" : "Steph"
+  ]);
   const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `familia-finances-${currentMonth()}.csv`;
+  a.download = `familia-${selectedMonth}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -166,13 +175,14 @@ export default function App() {
               byCategory={byCategory} filteredTx={filteredTx}
               selectedMonth={selectedMonth} months={months}
               onMonthChange={setSelectedMonth} viewMode={viewMode} onViewModeChange={setViewMode}
-              user={user} otherName={otherName} onExport={() => exportToCSV(transactions)} />
+              user={user} otherName={otherName}
+              onExport={() => exportToCSV(transactions, selectedMonth)} />
           )}
           {tab === "transactions" && (
             <Transactions filteredTx={filteredTx} onDelete={deleteTransaction} onEdit={setEditingTx} user={user}
               selectedMonth={selectedMonth} months={months} onMonthChange={setSelectedMonth}
               viewMode={viewMode} onViewModeChange={setViewMode} otherName={otherName}
-              onExport={() => exportToCSV(filteredTx)} />
+              onExport={() => exportToCSV(transactions, selectedMonth)} />
           )}
           {tab === "goals" && (
             <Goals goals={goals} onAddGoal={() => setShowAddGoal(true)} onUpdateSaved={updateGoalSaved} onDelete={deleteGoal} user={user} />
@@ -232,7 +242,7 @@ function MonthPicker({ months, selected, onChange }: any) {
       border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 10px",
       fontSize: 13, background: COLORS.card, color: COLORS.text, cursor: "pointer", fontFamily: "'Georgia', serif"
     }}>
-      {months.map((m: string) => <option key={m} value={m}>{new Date(m + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>)}
+      {months.map((m: string) => <option key={m} value={m}>{new Date(m + "-02").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>)}
     </select>
   );
 }
@@ -470,7 +480,7 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
         <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 10 }}>{pct.toFixed(0)}% complete{g.deadline ? ` · Target: ${g.deadline}` : ""}</div>
         {contributing === g.id ? (
           <div style={{ display: "flex", gap: 8 }}>
-            <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount" style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "'Georgia', serif" }} />
+            <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount" style={{ flex: 1, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "'Georgia', serif" }} />
             <button onClick={() => { onUpdateSaved(g.id, amount); setContributing(null); setAmount(""); }} style={{ background: COLORS.gabriel, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer", fontFamily: "'Georgia', serif" }}>Add</button>
             <button onClick={() => setContributing(null)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, cursor: "pointer", fontFamily: "'Georgia', serif" }}>✕</button>
           </div>
