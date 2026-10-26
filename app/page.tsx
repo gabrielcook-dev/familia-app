@@ -1,13 +1,14 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
-
-const USERS = { gabriel: "Gabriel", steph: "Steph" };
+import { parseSpoken } from "../lib/parse";
 
 const CATEGORIES = {
   expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Gas", "Taxi", "Motorbike", "Kids", "Aniel", "Medical", "Clothing", "Cleaning/Nanny", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business/SS", "Other"],
-  income: ["Dr. Tena / Coaching", "Sound Journey", "ECG Creations", "Vibraçao", "Freelance", "Other Income"]
+  income: ["Teshna", "Coaching / Consulting", "Marketing Agency Work", "Sound Journey", "Vibraçao", "Other Income"]
 };
+
+const USERS = { gabriel: "Gabriel", steph: "Steph" };
 
 const GOAL_TYPES = ["Family Goal", "Personal Goal"];
 
@@ -18,7 +19,7 @@ const COLORS = {
 
 const fmt = (n: any) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtSigned = (n: any) => (n >= 0 ? "+" : "-") + fmt(n);
-const today = () => new Date().toISOString().split("T")[0];
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const monthKey = (d: any) => d.slice(0, 7);
 const currentMonth = () => {
   const now = new Date();
@@ -64,7 +65,9 @@ function exportToCSV(transactions: any[], selectedMonth: string) {
 }
 
 export default function App() {
-  const [user, setUser] = useState<any>(null);
+  const [session, setSession] = useState<any>(undefined);
+  const [user, setUserState] = useState<any>(null);
+  const [showVoice, setShowVoice] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [transactions, setTransactions] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
@@ -89,7 +92,36 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (user) loadData(); }, [user, loadData]);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    try { const saved = localStorage.getItem("familia-user"); if (saved) setUserState(saved); } catch (e) {}
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const setUser = (u: any) => {
+    setUserState(u);
+    try { if (u) localStorage.setItem("familia-user", u); else localStorage.removeItem("familia-user"); } catch (e) {}
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  useEffect(() => { if (user && session) loadData(); }, [user, session, loadData]);
+
+  const addTransactions = async (list: any[]) => {
+    setSaving(true);
+    const now = new Date().toISOString();
+    const rows = list.map((t: any) => ({ id: generateId(), type: t.type, amount: Number(t.amount), category: t.category, description: t.description, date: t.date, created_by: t.who || user, created_at: now }));
+    const { error } = await supabase.from("transactions").insert(rows);
+    setSaving(false);
+    if (error) return false;
+    setTransactions(prev => [...rows.map(r => ({ ...r, createdBy: r.created_by, createdAt: r.created_at })), ...prev]);
+    setShowVoice(false);
+    return true;
+  };
 
   const addTransaction = async (t: any) => {
     setSaving(true);
@@ -159,7 +191,9 @@ export default function App() {
   const months = getMonths(transactions);
   const otherName = user === "gabriel" ? "Steph" : "Gabriel";
 
-  if (!user) return <LoginScreen onLogin={setUser} />;
+  if (session === undefined) return <div style={{ background: COLORS.bg, minHeight: "100vh" }} />;
+  if (!session) return <SignInScreen />;
+  if (!user) return <LoginScreen onLogin={setUser} onSignOut={signOut} />;
 
   return (
     <div style={{ fontFamily: "'Georgia', serif", background: COLORS.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", position: "relative" }}>
@@ -189,7 +223,9 @@ export default function App() {
           )}
         </div>
       )}
-      <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowAdd(true)} />
+      <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowVoice(true)} />
+      {showVoice && <VoiceSheet user={user} history={transactions} onSave={addTransactions} onClose={() => setShowVoice(false)}
+        onTypeInstead={() => { setShowVoice(false); setShowAdd(true); }} />}
       {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} />}
       {showAddGoal && <AddGoalModal onAdd={addGoal} onClose={() => setShowAddGoal(false)} user={user} />}
       {editingTx && <EditTransactionModal tx={editingTx} onSave={updateTransaction} onClose={() => setEditingTx(null)} />}
@@ -197,7 +233,45 @@ export default function App() {
   );
 }
 
-function LoginScreen({ onLogin }: any) {
+function SignInScreen() {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const creating = mode === "create";
+  const submit = async () => {
+    if (!email.includes("@") || !password) return;
+    if (creating && password.length < 8) { setError("Use at least 8 characters."); return; }
+    setBusy(true); setError("");
+    const creds = { email: email.trim(), password };
+    const { data, error } = creating ? await supabase.auth.signUp(creds) : await supabase.auth.signInWithPassword(creds);
+    setBusy(false);
+    if (error) setError(creating ? error.message : "That email and password don't match.");
+    else if (!data.session) setError("Your account is waiting for email confirmation, which is switched off for Familia. Ask Gabriel.");
+  };
+  return (
+    <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
+      <div style={{ marginBottom: 12, fontSize: 40 }}>🌿</div>
+      <h1 style={{ fontFamily: "'Georgia', serif", fontSize: 26, fontWeight: 400, color: COLORS.text, margin: "0 0 6px" }}>Familia</h1>
+      <p style={{ color: COLORS.muted, fontSize: 14, margin: "0 0 28px", textAlign: "center", lineHeight: 1.6 }}>{creating ? "Create your password" : "Sign in"}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 280 }}>
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" autoComplete="email" style={inputStyle} />
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => { if (e.key === "Enter") submit(); }}
+          placeholder={creating ? "New password (8+ characters)" : "Password"} autoComplete={creating ? "new-password" : "current-password"} style={inputStyle} />
+        <button onClick={submit} disabled={busy} style={{ background: COLORS.gabriel, color: "#fff", border: "none", borderRadius: 12, padding: "14px 24px", fontSize: 15, fontFamily: "'Georgia', serif", cursor: "pointer", opacity: busy ? 0.6 : 1 }}>
+          {busy ? "One moment..." : creating ? "Create and sign in" : "Sign in"}
+        </button>
+        {error && <div style={{ fontSize: 12, color: COLORS.expense, textAlign: "center", lineHeight: 1.5 }}>{error}</div>}
+        <button onClick={() => { setMode(creating ? "signin" : "create"); setError(""); }} style={{ background: "none", border: "none", color: COLORS.muted, fontSize: 12, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 6 }}>
+          {creating ? "I already have a password" : "First time here? Create your password"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, onSignOut }: any) {
   return (
     <div style={{ background: COLORS.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div style={{ marginBottom: 12, fontSize: 40 }}>🌿</div>
@@ -215,6 +289,7 @@ function LoginScreen({ onLogin }: any) {
             <span>I'm {name}</span>
           </button>
         ))}
+        <button onClick={onSignOut} style={{ background: "none", border: "none", color: COLORS.muted, fontSize: 12, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 10 }}>Sign out</button>
       </div>
     </div>
   );
@@ -533,6 +608,200 @@ function Goals({ goals, onAddGoal, onUpdateSaved, onDelete, user }: any) {
   );
 }
 
+function MicIcon({ size = 20 }: any) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  );
+}
+
+const VOICE_LANGS = [{ id: "en-US", label: "English" }, { id: "es-EC", label: "Español" }];
+
+function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
+  const [lang, setLang] = useState("en-US");
+  const [supported, setSupported] = useState(true);
+  const [listening, setListening] = useState(false);
+  const [text, setText] = useState("");
+  const [saving, setSavingState] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [entries, setEntries] = useState<any[] | null>(null);
+  const recRef = useRef<any>(null);
+  const textRef = useRef("");
+  const understandAfterStop = useRef(false);
+
+  const updateText = (t: string) => { textRef.current = t; setText(t); };
+
+  useEffect(() => {
+    let l = (navigator.language || "").toLowerCase().startsWith("es") ? "es-EC" : "en-US";
+    try { l = localStorage.getItem("familia-voice-lang") || l; } catch (e) {}
+    setLang(l);
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setSupported(!!SR);
+    if (SR) start(l, true);
+    return () => { try { recRef.current?.abort(); } catch (e) {} };
+  }, []);
+
+  const start = (l = lang, auto = false) => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR || recRef.current) return;
+    const rec = new SR();
+    rec.lang = l; rec.continuous = true; rec.interimResults = true;
+    const base = textRef.current.trim() ? textRef.current.trim() + " " : "";
+    rec.onresult = (e: any) => {
+      let heard = "";
+      for (let i = 0; i < e.results.length; i++) heard += e.results[i][0].transcript;
+      updateText(base + heard);
+    };
+    rec.onerror = (e: any) => {
+      if (e.error === "not-allowed") { if (!auto) setError("The microphone is blocked for this site. Allow it in your browser settings, or type below."); }
+      else if (e.error !== "no-speech" && e.error !== "aborted") setError("I couldn't hear that. Tap the mic and try again.");
+    };
+    rec.onend = () => {
+      recRef.current = null;
+      setListening(false);
+      if (understandAfterStop.current) { understandAfterStop.current = false; understand(); }
+    };
+    recRef.current = rec;
+    setError("");
+    setListening(true);
+    try { rec.start(); } catch (e) { recRef.current = null; setListening(false); }
+  };
+
+  const stopListening = () => {
+    const rec = recRef.current;
+    if (!rec) return;
+    rec.onend = null;
+    try { rec.abort(); } catch (e) {}
+    recRef.current = null;
+    setListening(false);
+  };
+
+  const switchLang = (l: string) => {
+    setLang(l);
+    try { localStorage.setItem("familia-voice-lang", l); } catch (e) {}
+    if (recRef.current) { stopListening(); start(l); }
+  };
+
+  const understand = () => {
+    const said = textRef.current.trim();
+    if (!said) { setError("I didn't catch anything yet."); return; }
+    setError("");
+    const es = lang.startsWith("es");
+    const { entries: list, skipped } = parseSpoken(said, { speaker: user, today: today(), history, categories: CATEGORIES });
+    setEntries(list.map(x => ({ ...x, amount: String(x.amount) })));
+    if (!list.length) setNote(es ? "No encontré un monto. Di un número, por ejemplo \"12 en el mercado\"." : "I didn't find an amount. Say a number, like \"12 at the market\".");
+    else setNote(skipped.length ? (es ? "Sin monto, lo dejé fuera: " : "No amount, so I left out: ") + skipped.join("; ") : "");
+  };
+
+  const done = () => {
+    if (recRef.current) { understandAfterStop.current = true; recRef.current.stop(); }
+    else understand();
+  };
+
+  const setEntry = (i: number, k: string, v: any) => setEntries((prev: any) => prev.map((x: any, j: number) => j !== i ? x : {
+    ...x, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {})
+  }));
+  const removeEntry = (i: number) => setEntries((prev: any) => prev.filter((_: any, j: number) => j !== i));
+  const startOver = () => { setEntries(null); setNote(""); setError(""); updateText(""); start(); };
+  const ready = (entries || []).filter((x: any) => Number(x.amount) > 0);
+
+  const save = async () => {
+    if (!ready.length) return;
+    setSavingState(true);
+    const ok = await onSave(ready);
+    setSavingState(false);
+    if (!ok) setError("Couldn't save. Check your connection and try again.");
+  };
+
+  const small: any = { ...inputStyle, padding: "8px 10px", fontSize: 14 };
+  const pill = (active: boolean, color = COLORS.text): any => ({
+    flex: 1, background: active ? COLORS.card : "transparent", border: "none", borderRadius: 6, padding: "5px 8px", fontSize: 12,
+    cursor: "pointer", color: active ? color : COLORS.muted, fontFamily: "'Georgia', serif", fontWeight: active ? 500 : 400
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
+      <style>{`@keyframes familia-pulse { 0% { box-shadow: 0 0 0 0 rgba(192,57,43,0.45); } 100% { box-shadow: 0 0 0 18px rgba(192,57,43,0); } }`}</style>
+      <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>{entries ? "Check and save" : "Say it"}</div>
+          <button onClick={() => { stopListening(); onClose(); }} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
+        </div>
+
+        {!entries && (
+          <>
+            {supported && (
+              <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, marginBottom: 20 }}>
+                {VOICE_LANGS.map(l => <button key={l.id} onClick={() => switchLang(l.id)} style={pill(lang === l.id)}>{l.label}</button>)}
+              </div>
+            )}
+            {supported && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 18 }}>
+                <button onClick={() => listening ? done() : start()} aria-label={listening ? "Stop and read" : "Start talking"} style={{
+                  width: 76, height: 76, borderRadius: "50%", border: "none", cursor: "pointer", color: "#fff",
+                  background: listening ? COLORS.expense : COLORS.text, display: "flex", alignItems: "center", justifyContent: "center",
+                  animation: listening ? "familia-pulse 1.2s ease-out infinite" : "none"
+                }}><MicIcon size={30} /></button>
+                <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 10, textAlign: "center" }}>
+                  {listening ? "Listening. Tap when you're done." : "Tap the mic and talk"}
+                </div>
+              </div>
+            )}
+            <textarea value={text} onChange={e => updateText(e.target.value)} rows={3}
+              placeholder={supported ? "Your words show up here. Fix any word before I read it." : "Type it, or tap the mic on your keyboard. e.g. 12 dollars at the Saturday market and 5 for coffee"}
+              style={{ ...inputStyle, resize: "none", lineHeight: 1.5, marginBottom: 6 }} />
+            <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 16, lineHeight: 1.5 }}>Try: "Twelve dollars at the market and five for coffee. Yesterday Steph paid forty for the doctor."</div>
+            <button onClick={done} disabled={!text.trim() && !listening} style={{
+              width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
+              fontFamily: "'Georgia', serif", opacity: !text.trim() && !listening ? 0.5 : 1
+            }}>Done</button>
+            <button onClick={() => { stopListening(); onTypeInstead(); }} style={{ width: "100%", background: "none", border: "none", color: COLORS.muted, fontSize: 13, padding: 12, cursor: "pointer", fontFamily: "'Georgia', serif" }}>Fill in a form instead</button>
+          </>
+        )}
+
+        {entries && (
+          <>
+            {note && <div style={{ fontSize: 13, color: COLORS.muted, fontStyle: "italic", background: COLORS.bg, borderRadius: 8, padding: "10px 12px", marginBottom: 12, lineHeight: 1.5 }}>{note}</div>}
+            {entries.map((x: any, i: number) => (
+              <div key={i} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, flex: 1 }}>
+                    {["expense", "income"].map(t => <button key={t} onClick={() => setEntry(i, "type", t)} style={pill(x.type === t, t === "income" ? COLORS.income : COLORS.expense)}>{t === "income" ? "Income" : "Expense"}</button>)}
+                  </div>
+                  <button onClick={() => removeEntry(i)} aria-label="Remove" style={{ background: "none", border: "none", fontSize: 20, color: COLORS.muted, cursor: "pointer", padding: "0 4px" }}>×</button>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input type="number" step="0.01" inputMode="decimal" value={x.amount} onChange={e => setEntry(i, "amount", e.target.value)} style={{ ...small, flex: 1, minWidth: 0 }} />
+                  <select value={x.category} onChange={e => setEntry(i, "category", e.target.value)} style={{ ...small, flex: 2, minWidth: 0 }}>
+                    {CATEGORIES[x.type as keyof typeof CATEGORIES].map((c: string) => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                <input type="text" value={x.description} onChange={e => setEntry(i, "description", e.target.value)} placeholder="Description" style={{ ...small, marginBottom: 8 }} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="date" value={x.date} onChange={e => setEntry(i, "date", e.target.value)} style={{ ...small, flex: 1, minWidth: 0 }} />
+                  <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, flex: 1 }}>
+                    {Object.entries(USERS).map(([k, name]) => <button key={k} onClick={() => setEntry(i, "who", k)} style={pill(x.who === k, k === "gabriel" ? COLORS.gabriel : COLORS.steph)}>{name}</button>)}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={save} disabled={saving || !ready.length} style={{
+              width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
+              fontFamily: "'Georgia', serif", marginTop: 6, opacity: saving || !ready.length ? 0.5 : 1
+            }}>{saving ? "Saving..." : ready.length === 1 ? "Save 1 entry" : `Save ${ready.length} entries`}</button>
+            <button onClick={startOver} style={{ width: "100%", background: "none", border: "none", color: COLORS.muted, fontSize: 13, padding: 12, cursor: "pointer", fontFamily: "'Georgia', serif" }}>Start over</button>
+          </>
+        )}
+        {error && <div style={{ fontSize: 13, color: COLORS.expense, textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>{error}</div>}
+      </div>
+    </div>
+  );
+}
+
 function AddTransactionModal({ onAdd, onClose, user }: any) {
   const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "" });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
@@ -612,7 +881,7 @@ function BottomNav({ tab, onTab, onAdd }: any) {
             <span style={{ fontSize: 10, color: tab === t.id ? COLORS.text : COLORS.muted, fontFamily: "'Georgia', serif" }}>{t.label}</span>
           </button>
           {i === 1 && (
-            <button onClick={onAdd} style={{ width: 52, height: 52, borderRadius: "50%", background: COLORS.text, border: "none", cursor: "pointer", color: "#fff", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10 }}>+</button>
+            <button onClick={onAdd} aria-label="Add by voice" style={{ width: 52, height: 52, borderRadius: "50%", background: COLORS.text, border: "none", cursor: "pointer", color: "#fff", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10 }}><MicIcon size={22} /></button>
           )}
         </div>
       ))}
