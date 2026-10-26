@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
-import { parseSpoken } from "../lib/parse";
+import { parseSpoken, sameEntry, joinHeard } from "../lib/parse";
 
 const CATEGORIES = {
   expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Gas", "Taxi", "Motorbike", "Kids", "Aniel", "Medical", "Clothing", "Cleaning/Nanny", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business/SS", "Other"],
@@ -123,12 +123,20 @@ export default function App() {
     return true;
   };
 
+  // Extra taps while a save is still on its way used to save the same entry again.
+  const adding = useRef(false);
   const addTransaction = async (t: any) => {
+    if (adding.current) return;
+    const twin = transactions.find((x: any) => sameEntry(x, t));
+    if (twin && !window.confirm(`This is already saved: ${fmt(t.amount)} ${twin.description || twin.category} on ${t.date}. Save it again?`)) return;
+    adding.current = true;
     setSaving(true);
     const newTx = { id: generateId(), type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, created_by: user, created_at: new Date().toISOString() };
-    await supabase.from("transactions").insert(newTx);
-    setTransactions(prev => [{ ...newTx, createdBy: user }, ...prev]);
+    const { error } = await supabase.from("transactions").insert(newTx);
+    adding.current = false;
     setSaving(false);
+    if (error) { window.alert("Couldn't save. Check your connection and try again."); return; }
+    setTransactions(prev => [{ ...newTx, createdBy: user }, ...prev]);
     setShowAdd(false);
   };
 
@@ -226,7 +234,7 @@ export default function App() {
       <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowVoice(true)} />
       {showVoice && <VoiceSheet user={user} history={transactions} onSave={addTransactions} onClose={() => setShowVoice(false)}
         onTypeInstead={() => { setShowVoice(false); setShowAdd(true); }} />}
-      {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} />}
+      {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} saving={saving} />}
       {showAddGoal && <AddGoalModal onAdd={addGoal} onClose={() => setShowAddGoal(false)} user={user} />}
       {editingTx && <EditTransactionModal tx={editingTx} onSave={updateTransaction} onClose={() => setEditingTx(null)} />}
     </div>
@@ -652,9 +660,9 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
     rec.lang = l; rec.continuous = true; rec.interimResults = true;
     const base = textRef.current.trim() ? textRef.current.trim() + " " : "";
     rec.onresult = (e: any) => {
-      let heard = "";
-      for (let i = 0; i < e.results.length; i++) heard += e.results[i][0].transcript;
-      updateText(base + heard);
+      const parts: string[] = [];
+      for (let i = 0; i < e.results.length; i++) parts.push(e.results[i][0].transcript);
+      updateText(base + joinHeard(parts));
     };
     rec.onerror = (e: any) => {
       if (e.error === "not-allowed") { if (!auto) setError("The microphone is blocked for this site. Allow it in your browser settings, or type below."); }
@@ -691,10 +699,13 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
     if (!said) { setError("I didn't catch anything yet."); return; }
     setError("");
     const es = lang.startsWith("es");
-    const { entries: list, skipped } = parseSpoken(said, { speaker: user, today: today(), history, categories: CATEGORIES });
+    const { entries: list, skipped, repeats } = parseSpoken(said, { speaker: user, today: today(), history, categories: CATEGORIES });
     setEntries(list.map(x => ({ ...x, amount: String(x.amount) })));
-    if (!list.length) setNote(es ? "No encontré un monto. Di un número, por ejemplo \"12 en el mercado\"." : "I didn't find an amount. Say a number, like \"12 at the market\".");
-    else setNote(skipped.length ? (es ? "Sin monto, lo dejé fuera: " : "No amount, so I left out: ") + skipped.join("; ") : "");
+    if (!list.length) { setNote(es ? "No encontré un monto. Di un número, por ejemplo \"12 en el mercado\"." : "I didn't find an amount. Say a number, like \"12 at the market\"."); return; }
+    const notes = [];
+    if (skipped.length) notes.push((es ? "Sin monto, lo dejé fuera: " : "No amount, so I left out: ") + skipped.join("; "));
+    if (repeats) notes.push(es ? `Lo dijiste ${repeats + 1} veces; lo guardo una vez.` : `You said the same thing ${repeats + 1} times, so I kept it once.`);
+    setNote(notes.join(" "));
   };
 
   const done = () => {
@@ -707,7 +718,9 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
   }));
   const removeEntry = (i: number) => setEntries((prev: any) => prev.filter((_: any, j: number) => j !== i));
   const startOver = () => { setEntries(null); setNote(""); setError(""); updateText(""); start(); };
-  const ready = (entries || []).filter((x: any) => Number(x.amount) > 0);
+  // A card that matches an entry already in the app is left out unless they tap "Save it anyway".
+  const alreadySaved = (x: any) => !x.keep && history.some((h: any) => sameEntry(h, x));
+  const ready = (entries || []).filter((x: any) => Number(x.amount) > 0 && !alreadySaved(x));
 
   const save = async () => {
     if (!ready.length) return;
@@ -787,12 +800,18 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
                     {Object.entries(USERS).map(([k, name]) => <button key={k} onClick={() => setEntry(i, "who", k)} style={pill(x.who === k, k === "gabriel" ? COLORS.gabriel : COLORS.steph)}>{name}</button>)}
                   </div>
                 </div>
+                {alreadySaved(x) && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8, background: "#fdf3e1", borderRadius: 8, padding: "8px 10px", fontSize: 12, color: "#8a5a00", lineHeight: 1.4 }}>
+                    <span>{lang.startsWith("es") ? "Ya está guardado. No lo guardo otra vez." : "Already saved, so I won't save it again."}</span>
+                    <button onClick={() => setEntry(i, "keep", true)} style={{ background: "none", border: "1px solid #e0c48f", borderRadius: 6, padding: "4px 8px", fontSize: 12, color: "#8a5a00", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Georgia', serif" }}>{lang.startsWith("es") ? "Guardar igual" : "Save it anyway"}</button>
+                  </div>
+                )}
               </div>
             ))}
             <button onClick={save} disabled={saving || !ready.length} style={{
               width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
               fontFamily: "'Georgia', serif", marginTop: 6, opacity: saving || !ready.length ? 0.5 : 1
-            }}>{saving ? "Saving..." : ready.length === 1 ? "Save 1 entry" : `Save ${ready.length} entries`}</button>
+            }}>{saving ? "Saving..." : !ready.length ? "Nothing new to save" : ready.length === 1 ? "Save 1 entry" : `Save ${ready.length} entries`}</button>
             <button onClick={startOver} style={{ width: "100%", background: "none", border: "none", color: COLORS.muted, fontSize: 13, padding: 12, cursor: "pointer", fontFamily: "'Georgia', serif" }}>Start over</button>
           </>
         )}
@@ -802,7 +821,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
   );
 }
 
-function AddTransactionModal({ onAdd, onClose, user }: any) {
+function AddTransactionModal({ onAdd, onClose, user, saving }: any) {
   const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "" });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
@@ -833,7 +852,7 @@ function AddTransactionModal({ onAdd, onClose, user }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.amount) onAdd(form); }} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Add transaction</button>
+        <button onClick={() => { if (form.amount) onAdd(form); }} disabled={saving} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8, opacity: saving ? 0.5 : 1 }}>{saving ? "Saving..." : "Add transaction"}</button>
       </div>
     </div>
   );

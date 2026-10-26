@@ -324,5 +324,32 @@ export function parseSpoken(text: string, opts: { speaker: string; today: string
     const words = s.filter(t => t.num === undefined && !FILLER.has(t.norm) && t.raw.length > 2);
     if (words.length && !s.some(t => t.kind === "amount") && !readDate(s, today) && !s.some(t => PEOPLE[t.norm])) skipped.push(s.map(t => t.raw).join(" "));
   }
-  return { entries, skipped };
+  // The same thing said twice in one note is one entry.
+  const unique = entries.filter((e, i) => !entries.slice(0, i).some(p => sameEntry(p, e)));
+  return { entries: unique, skipped, repeats: entries.length - unique.length };
+}
+
+const plain = (s: string) => fold(s || "").replace(/[^a-z0-9]+/g, " ").trim();
+
+// Same type, amount, day and category, and one description is blank or holds the other ("Market" / "Saturday market").
+export function sameEntry(a: any, b: any) {
+  if (a.type !== b.type || a.date !== b.date || a.category !== b.category) return false;
+  if (Math.round(Number(a.amount) * 100) !== Math.round(Number(b.amount) * 100)) return false;
+  const da = ` ${plain(a.description)} `, db = ` ${plain(b.description)} `;
+  return !da.trim() || !db.trim() || da.includes(db) || db.includes(da);
+}
+
+// Some phones resend everything heard so far in each new speech result ("30", "30 at the", "30 at the market").
+// Keep each phrase once instead of gluing the copies together.
+export function joinHeard(parts: string[]) {
+  const out: string[] = [];
+  for (const raw of parts) {
+    const t = raw.trim(), p = plain(t);
+    if (!p) continue;
+    const sofar = plain(out.join(" ")), last = plain(out[out.length - 1] || "");
+    if (sofar && (p === sofar || p.startsWith(sofar + " "))) out.splice(0, out.length, t);
+    else if (last && (p === last || p.startsWith(last + " "))) out[out.length - 1] = t;
+    else out.push(t);
+  }
+  return out.join(" ");
 }
