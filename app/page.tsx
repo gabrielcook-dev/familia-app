@@ -231,10 +231,11 @@ export default function App() {
           )}
         </div>
       )}
-      <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowVoice(true)} />
+      <BottomNav tab={tab} onTab={setTab} onAdd={() => setShowAdd(true)} />
       {showVoice && <VoiceSheet user={user} history={transactions} onSave={addTransactions} onClose={() => setShowVoice(false)}
         onTypeInstead={() => { setShowVoice(false); setShowAdd(true); }} />}
-      {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} saving={saving} />}
+      {showAdd && <AddTransactionModal onAdd={addTransaction} onClose={() => setShowAdd(false)} user={user} saving={saving}
+        onSayIt={() => { setShowAdd(false); setShowVoice(true); }} />}
       {showAddGoal && <AddGoalModal onAdd={addGoal} onClose={() => setShowAddGoal(false)} user={user} />}
       {editingTx && <EditTransactionModal tx={editingTx} onSave={updateTransaction} onClose={() => setEditingTx(null)} />}
     </div>
@@ -637,27 +638,41 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [entries, setEntries] = useState<any[] | null>(null);
+  const [micOff, setMicOff] = useState(false);
   const recRef = useRef<any>(null);
   const textRef = useRef("");
+  const boxRef = useRef<HTMLTextAreaElement>(null);
   const understandAfterStop = useRef(false);
 
   const updateText = (t: string) => { textRef.current = t; setText(t); };
 
+  // The app's own mic often fails on phones (iPhone home-screen apps, dictation switched off), so it only
+  // starts on a tap, and once it has failed the mic button opens the keyboard, whose own mic always works.
   useEffect(() => {
     let l = (navigator.language || "").toLowerCase().startsWith("es") ? "es-EC" : "en-US";
-    try { l = localStorage.getItem("familia-voice-lang") || l; } catch (e) {}
+    try { l = localStorage.getItem("familia-voice-lang") || l; setMicOff(localStorage.getItem("familia-mic") === "off"); } catch (e) {}
     setLang(l);
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    setSupported(!!SR);
-    if (SR) start(l, true);
+    setSupported(!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition));
     return () => { try { recRef.current?.abort(); } catch (e) {} };
   }, []);
 
-  const start = (l = lang, auto = false) => {
+  const openKeyboard = () => {
+    boxRef.current?.focus();
+    setError("");
+  };
+
+  const micTap = () => {
+    if (listening) { recRef.current?.stop(); return; }
+    if (!supported || micOff) { openKeyboard(); return; }
+    start();
+  };
+
+  const start = (l = lang) => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR || recRef.current) return;
     const rec = new SR();
-    rec.lang = l; rec.continuous = true; rec.interimResults = true;
+    const iphone = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    rec.lang = l; rec.continuous = !iphone; rec.interimResults = true;
     const base = textRef.current.trim() ? textRef.current.trim() + " " : "";
     rec.onresult = (e: any) => {
       const parts: string[] = [];
@@ -665,8 +680,15 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
       updateText(base + joinHeard(parts));
     };
     rec.onerror = (e: any) => {
-      if (e.error === "not-allowed") { if (!auto) setError("The microphone is blocked for this site. Allow it in your browser settings, or type below."); }
-      else if (e.error !== "no-speech" && e.error !== "aborted") setError("I couldn't hear that. Tap the mic and try again.");
+      const es = l.startsWith("es");
+      if (e.error === "aborted") return;
+      if (e.error === "no-speech") { setError(es ? "No escuché nada. Toca el micrófono otra vez, o usa el 🎤 de tu teclado." : "I didn't hear anything. Tap the mic again, or use the 🎤 on your keyboard."); return; }
+      if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
+        setMicOff(true);
+        try { localStorage.setItem("familia-mic", "off"); } catch (err) {}
+      }
+      setError((es ? "Tu teléfono no deja que la app use el micrófono" : "Your phone isn't letting the app use its microphone") + ` (${e.error}). ` +
+        (es ? "Toca el cuadro y luego el 🎤 de tu teclado para hablar." : "Tap the box, then the 🎤 on your keyboard to talk."));
     };
     rec.onend = () => {
       recRef.current = null;
@@ -717,7 +739,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
     ...x, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {})
   }));
   const removeEntry = (i: number) => setEntries((prev: any) => prev.filter((_: any, j: number) => j !== i));
-  const startOver = () => { setEntries(null); setNote(""); setError(""); updateText(""); start(); };
+  const startOver = () => { setEntries(null); setNote(""); setError(""); updateText(""); };
   // A card that matches an entry already in the app is left out unless they tap "Save it anyway".
   const alreadySaved = (x: any) => !x.keep && history.some((h: any) => sameEntry(h, x));
   const ready = (entries || []).filter((x: any) => Number(x.amount) > 0 && !alreadySaved(x));
@@ -741,33 +763,34 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
       <style>{`@keyframes familia-pulse { 0% { box-shadow: 0 0 0 0 rgba(192,57,43,0.45); } 100% { box-shadow: 0 0 0 18px rgba(192,57,43,0); } }`}</style>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>{entries ? "Check and save" : "Say it"}</div>
+          <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>{entries ? "Check and save" : "Type or say it"}</div>
           <button onClick={() => { stopListening(); onClose(); }} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
         </div>
 
         {!entries && (
           <>
-            {supported && (
-              <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, marginBottom: 20 }}>
-                {VOICE_LANGS.map(l => <button key={l.id} onClick={() => switchLang(l.id)} style={pill(lang === l.id)}>{l.label}</button>)}
-              </div>
-            )}
-            {supported && (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 18 }}>
-                <button onClick={() => listening ? done() : start()} aria-label={listening ? "Stop and read" : "Start talking"} style={{
-                  width: 76, height: 76, borderRadius: "50%", border: "none", cursor: "pointer", color: "#fff",
-                  background: listening ? COLORS.expense : COLORS.text, display: "flex", alignItems: "center", justifyContent: "center",
-                  animation: listening ? "familia-pulse 1.2s ease-out infinite" : "none"
-                }}><MicIcon size={30} /></button>
-                <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 10, textAlign: "center" }}>
-                  {listening ? "Listening. Tap when you're done." : "Tap the mic and talk"}
+            <div style={{ position: "relative", marginBottom: 8 }}>
+              <textarea ref={boxRef} value={text} onChange={e => updateText(e.target.value)} rows={4}
+                placeholder="e.g. 12 at the market and 5 for coffee"
+                style={{ ...inputStyle, resize: "none", lineHeight: 1.5, paddingRight: 52, fontSize: 16 }} />
+              <button onClick={micTap} aria-label={listening ? "Stop listening" : "Dictate"} style={{
+                position: "absolute", right: 8, bottom: 10, width: 36, height: 36, borderRadius: "50%", border: "none", cursor: "pointer",
+                color: "#fff", background: listening ? COLORS.expense : COLORS.text, display: "flex", alignItems: "center", justifyContent: "center",
+                animation: listening ? "familia-pulse 1.2s ease-out infinite" : "none"
+              }}><MicIcon size={17} /></button>
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+              {listening ? "Listening. Tap the red mic when you're done." : "To talk instead of typing: tap the box, then the 🎤 on your keyboard."}
+            </div>
+            {error && <div style={{ fontSize: 13, color: COLORS.expense, marginBottom: 14, lineHeight: 1.5 }}>{error}</div>}
+            {supported && !micOff && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                <span style={{ fontSize: 12, color: COLORS.muted }}>Mic language</span>
+                <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, flex: 1 }}>
+                  {VOICE_LANGS.map(l => <button key={l.id} onClick={() => switchLang(l.id)} style={pill(lang === l.id)}>{l.label}</button>)}
                 </div>
               </div>
             )}
-            <textarea value={text} onChange={e => updateText(e.target.value)} rows={3}
-              placeholder={supported ? "Your words show up here. Fix any word before I read it." : "Type it, or tap the mic on your keyboard. e.g. 12 dollars at the Saturday market and 5 for coffee"}
-              style={{ ...inputStyle, resize: "none", lineHeight: 1.5, marginBottom: 6 }} />
-            <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 16, lineHeight: 1.5 }}>Try: "Twelve dollars at the market and five for coffee. Yesterday Steph paid forty for the doctor."</div>
             <button onClick={done} disabled={!text.trim() && !listening} style={{
               width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer",
               fontFamily: "'Georgia', serif", opacity: !text.trim() && !listening ? 0.5 : 1
@@ -815,13 +838,13 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
             <button onClick={startOver} style={{ width: "100%", background: "none", border: "none", color: COLORS.muted, fontSize: 13, padding: 12, cursor: "pointer", fontFamily: "'Georgia', serif" }}>Start over</button>
           </>
         )}
-        {error && <div style={{ fontSize: 13, color: COLORS.expense, textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>{error}</div>}
+        {error && entries && <div style={{ fontSize: 13, color: COLORS.expense, textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>{error}</div>}
       </div>
     </div>
   );
 }
 
-function AddTransactionModal({ onAdd, onClose, user, saving }: any) {
+function AddTransactionModal({ onAdd, onClose, user, saving, onSayIt }: any) {
   const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "" });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
@@ -830,7 +853,10 @@ function AddTransactionModal({ onAdd, onClose, user, saving }: any) {
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 500, color: COLORS.text }}>Add transaction</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={onSayIt} aria-label="Say it instead" style={{ display: "flex", alignItems: "center", gap: 5, background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: "6px 11px", fontSize: 12, cursor: "pointer", color: COLORS.text, fontFamily: "'Georgia', serif" }}><MicIcon size={14} />Say it</button>
+            <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.muted }}>×</button>
+          </div>
         </div>
         <div style={{ display: "flex", background: COLORS.border, borderRadius: 10, padding: 3, marginBottom: 20 }}>
           {["expense", "income"].map(t => (
@@ -900,7 +926,7 @@ function BottomNav({ tab, onTab, onAdd }: any) {
             <span style={{ fontSize: 10, color: tab === t.id ? COLORS.text : COLORS.muted, fontFamily: "'Georgia', serif" }}>{t.label}</span>
           </button>
           {i === 1 && (
-            <button onClick={onAdd} aria-label="Add by voice" style={{ width: 52, height: 52, borderRadius: "50%", background: COLORS.text, border: "none", cursor: "pointer", color: "#fff", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10 }}><MicIcon size={22} /></button>
+            <button onClick={onAdd} aria-label="Add entry" style={{ width: 52, height: 52, borderRadius: "50%", background: COLORS.text, border: "none", cursor: "pointer", color: "#fff", fontSize: 28, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.2)", flexShrink: 0, marginTop: -10 }}>+</button>
           )}
         </div>
       ))}
