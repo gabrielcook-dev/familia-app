@@ -4,9 +4,20 @@ import { supabase } from "../lib/supabase";
 import { parseSpoken, sameEntry, joinHeard } from "../lib/parse";
 
 const CATEGORIES = {
-  expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Gas", "Taxi", "Motorbike", "Kids", "Aniel", "Medical", "Clothing", "Cleaning/Nanny", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business/SS", "Other"],
+  expense: ["Food & Groceries", "Eating Out", "Rent", "Utilities", "Car", "Gas", "Taxi", "Motorbike", "Kids", "Aniel", "Medical", "Clothing", "Cleaning/Nanny", "Education", "Leisure & Travel", "Personal Care", "Special Events", "Gym", "Business/SS", "Credit Card Payment", "Other"],
   income: ["Teshna", "Coaching / Consulting", "Marketing Agency Work", "Sound Journey", "Vibraçao", "Other Income"]
 };
+
+// Paying the card covers purchases already logged one by one, so it isn't counted as spending again.
+const CARD_PAYMENT = "Credit Card Payment";
+const isSpending = (t: any) => t.type === "expense" && t.category !== CARD_PAYMENT;
+
+const PAID_WITH = [{ id: "cash", label: "Cash", short: "Cash" }, { id: "card", label: "Credit card", short: "Card" }, { id: "debit", label: "Debit / transfer", short: "Debit" }];
+const paidLabel = (id: string) => PAID_WITH.find(p => p.id === id)?.label || "";
+const paidShort = (id: string) => PAID_WITH.find(p => p.id === id)?.short || "";
+// Each phone remembers the last way its person paid, so the choice is usually already right.
+const lastPaidWith = () => { try { return localStorage.getItem("familia-paid-with") || "cash"; } catch (e) { return "cash"; } };
+const rememberPaidWith = (p: string) => { try { if (p) localStorage.setItem("familia-paid-with", p); } catch (e) {} };
 
 const USERS = { gabriel: "Gabriel", steph: "Steph" };
 
@@ -49,9 +60,9 @@ function getMonths(transactions: any[]) {
 
 function exportToCSV(transactions: any[], selectedMonth: string) {
   const filtered = transactions.filter((t: any) => monthKey(t.date) === selectedMonth);
-  const headers = ["Date", "Type", "Category", "Description", "Amount", "Added By"];
+  const headers = ["Date", "Type", "Category", "Description", "Amount", "Paid With", "Added By"];
   const rows = filtered.map((t: any) => [
-    t.date, t.type, t.category, (t.description || "").replace(/,/g, ";"), t.amount,
+    t.date, t.type, t.category, (t.description || "").replace(/,/g, ";"), t.amount, paidLabel(t.paid_with),
     t.createdBy === "gabriel" ? "Gabriel" : "Steph"
   ]);
   const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
@@ -114,7 +125,7 @@ export default function App() {
   const addTransactions = async (list: any[]) => {
     setSaving(true);
     const now = new Date().toISOString();
-    const rows = list.map((t: any) => ({ id: generateId(), type: t.type, amount: Number(t.amount), category: t.category, description: t.description, date: t.date, created_by: t.who || user, created_at: now }));
+    const rows = list.map((t: any) => ({ id: generateId(), type: t.type, amount: Number(t.amount), category: t.category, description: t.description, date: t.date, paid_with: t.type === "expense" ? t.paid_with || null : null, created_by: t.who || user, created_at: now }));
     const { error } = await supabase.from("transactions").insert(rows);
     setSaving(false);
     if (error) return false;
@@ -131,7 +142,7 @@ export default function App() {
     if (twin && !window.confirm(`This is already saved: ${fmt(t.amount)} ${twin.description || twin.category} on ${t.date}. Save it again?`)) return;
     adding.current = true;
     setSaving(true);
-    const newTx = { id: generateId(), type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, created_by: user, created_at: new Date().toISOString() };
+    const newTx = { id: generateId(), type: t.type, amount: t.amount, category: t.category, description: t.description, date: t.date, paid_with: t.type === "expense" ? t.paid_with || null : null, created_by: user, created_at: new Date().toISOString() };
     const { error } = await supabase.from("transactions").insert(newTx);
     adding.current = false;
     setSaving(false);
@@ -182,10 +193,11 @@ export default function App() {
   });
 
   const income = filteredTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const expenses = filteredTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const expenses = filteredTx.filter(isSpending).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const cardPaid = filteredTx.filter((t: any) => t.type === "expense" && t.category === CARD_PAYMENT).reduce((s: number, t: any) => s + Number(t.amount), 0);
   const net = income - expenses;
 
-  const byCategory = filteredTx.filter((t: any) => t.type === "expense").reduce((acc: any, t: any) => {
+  const byCategory = filteredTx.filter(isSpending).reduce((acc: any, t: any) => {
     acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
     return acc;
   }, {});
@@ -193,8 +205,8 @@ export default function App() {
   const allMonthTx = transactions.filter((t: any) => monthKey(t.date) === selectedMonth);
   const gabrielIncome = allMonthTx.filter((t: any) => t.type === "income" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const stephIncome = allMonthTx.filter((t: any) => t.type === "income" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const gabrielExpenses = allMonthTx.filter((t: any) => t.type === "expense" && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const stephExpenses = allMonthTx.filter((t: any) => t.type === "expense" && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const gabrielExpenses = allMonthTx.filter((t: any) => isSpending(t) && t.createdBy === "gabriel").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const stephExpenses = allMonthTx.filter((t: any) => isSpending(t) && t.createdBy === "steph").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
   const months = getMonths(transactions);
   const otherName = user === "gabriel" ? "Steph" : "Gabriel";
@@ -211,7 +223,7 @@ export default function App() {
       ) : (
         <div style={{ padding: "0 0 100px" }}>
           {tab === "dashboard" && (
-            <Dashboard income={income} expenses={expenses} net={net}
+            <Dashboard income={income} expenses={expenses} net={net} cardPaid={cardPaid}
               gabrielIncome={gabrielIncome} stephIncome={stephIncome}
               gabrielExpenses={gabrielExpenses} stephExpenses={stephExpenses}
               byCategory={byCategory} filteredTx={filteredTx}
@@ -385,7 +397,7 @@ function CategoryRow({ cat, amt, maxCat, txList }: any) {
   );
 }
 
-function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, otherName, onExport }: any) {
+function Dashboard({ income, expenses, net, cardPaid, gabrielIncome, stephIncome, gabrielExpenses, stephExpenses, byCategory, filteredTx, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, user, otherName, onExport }: any) {
   const topCats = Object.entries(byCategory).sort((a: any, b: any) => b[1] - a[1]).slice(0, 8);
   const maxCat = (topCats[0] as any)?.[1] || 1;
   const budgetGuide = [
@@ -417,6 +429,11 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
             <div style={{ fontSize: 20, color: "#e87d7d" }}>{fmt(expenses)}</div>
           </div>
         </div>
+        {cardPaid > 0 && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 14, lineHeight: 1.5 }}>
+            Paid to the credit card: {fmt(cardPaid)}. Not added to expenses, because the purchases are already&nbsp;there.
+          </div>
+        )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[
@@ -460,8 +477,84 @@ function Dashboard({ income, expenses, net, gabrielIncome, stephIncome, gabrielE
   );
 }
 
+const WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const shortMoney = (n: number) => n >= 1000 ? "$" + (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : "$" + (n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+
+// The month as a calendar: each day shows what was spent, and a deeper shade marks the month's bigger days.
+function DayCalendar({ month, txList, selected, onSelect }: any) {
+  const [y, m] = month.split("-").map(Number);
+  const daysIn = new Date(y, m, 0).getDate();
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+  const spent: Record<string, number> = {}, earned: Record<string, boolean> = {};
+  for (const t of txList) {
+    if (isSpending(t)) spent[t.date] = (spent[t.date] || 0) + Number(t.amount);
+    else if (t.type === "income") earned[t.date] = true;
+  }
+  const amounts = Object.values(spent).sort((a, b) => a - b);
+  const shade = (v: number) => {
+    if (!v) return COLORS.card;
+    const rank = amounts.filter(x => x <= v).length / amounts.length;
+    return `rgba(192,57,43,${rank > 0.75 ? 0.3 : rank > 0.5 ? 0.2 : rank > 0.25 ? 0.12 : 0.06})`;
+  };
+  const now = today();
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: daysIn }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`)];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 3 }}>
+      {WEEK.map(d => <div key={d} style={{ fontSize: 10, color: COLORS.muted, textAlign: "center", paddingBottom: 4 }}>{d}</div>)}
+      {cells.map((d, i) => d === null ? <div key={"x" + i} /> : (
+        <button key={d} onClick={() => onSelect(selected === d ? null : d)} aria-label={`${d}${spent[d] ? ", spent " + fmt(spent[d]) : ""}`} aria-pressed={selected === d} style={{
+          background: shade(spent[d]), border: `1px solid ${COLORS.border}`, boxShadow: selected === d ? `inset 0 0 0 2px ${COLORS.text}` : "none",
+          borderRadius: 8, minHeight: 52, padding: "4px 0", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, fontFamily: "'Georgia', serif"
+        }}>
+          <span style={{ fontSize: 12, width: 22, height: 22, lineHeight: "22px", borderRadius: "50%", background: d === now ? COLORS.text : "transparent", color: d === now ? "#fff" : d > now ? COLORS.muted : COLORS.text }}>{Number(d.slice(8))}</span>
+          <span style={{ fontSize: 10, color: COLORS.text, whiteSpace: "nowrap", minHeight: 12 }}>{spent[d] ? shortMoney(spent[d]) : ""}</span>
+          {earned[d] && <span style={{ width: 5, height: 5, borderRadius: "50%", background: COLORS.income }} />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EntryCard({ t, user, onEdit, onDelete }: any) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, background: t.type === "income" ? "#e8f5ee" : "#fdecea", color: t.type === "income" ? COLORS.income : COLORS.expense, borderRadius: 4, padding: "2px 6px", fontWeight: 500 }}>{t.type}</span>
+            <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱 Gabriel" : "🌸 Steph"}</span>
+          </div>
+          <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
+          <div style={{ fontSize: 11, color: COLORS.muted }}>
+            {t.category}{t.paid_with && <span style={{ whiteSpace: "nowrap" }}>{"\u00a0· " + paidShort(t.paid_with)}</span>}
+          </div>
+          {t.category === CARD_PAYMENT && <div style={{ fontSize: 11, color: COLORS.muted, fontStyle: "italic", marginTop: 2 }}>Not counted as spending</div>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 500, color: t.type === "income" ? COLORS.income : COLORS.expense }}>
+            {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
+          </div>
+          <button onClick={() => onEdit(t)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", color: COLORS.muted, fontSize: 12, padding: "2px 6px" }}>✎</button>
+          {t.createdBy === user && (
+            <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, months, onMonthChange, viewMode, onViewModeChange, otherName, onExport }: any) {
-  const sorted = [...filteredTx].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  // Today is open when the month is this month; tapping it again (or "See all") shows the whole month.
+  const [day, setDay] = useState<string | null>(selectedMonth === currentMonth() ? today() : null);
+  useEffect(() => { setDay(selectedMonth === currentMonth() ? today() : null); }, [selectedMonth]);
+  const shown = day ? filteredTx.filter((t: any) => t.date === day) : filteredTx;
+  const sorted = [...shown].sort((a: any, b: any) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const sum = (list: any[]) => list.filter(isSpending).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const monthSpent = sum(filteredTx), daySpent = sum(shown);
+  const monthName = new Date(selectedMonth + "-02").toLocaleDateString("en-US", { month: "long" });
+  const daysSoFar = selectedMonth === currentMonth() ? Number(today().slice(8)) : new Date(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5)), 0).getDate();
+  const title = !day ? `All of ${monthName}` : (day === today() ? "Today, " : "") + new Date(day + "T12:00:00").toLocaleDateString("en-US", day === today() ? { month: "long", day: "numeric" } : { weekday: "long", month: "long", day: "numeric" });
   return (
     <div style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
@@ -471,39 +564,66 @@ function Transactions({ filteredTx, onDelete, onEdit, user, selectedMonth, month
           <button onClick={onExport} style={{ background: COLORS.text, color: "#fff", border: "none", borderRadius: 8, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Georgia', serif" }}>↓ CSV</button>
         </div>
       </div>
-      {sorted.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 60, color: COLORS.muted, fontStyle: "italic" }}>No transactions yet this month</div>
-      ) : sorted.map((t: any) => (
-        <div key={t.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 10, background: t.type === "income" ? "#e8f5ee" : "#fdecea", color: t.type === "income" ? COLORS.income : COLORS.expense, borderRadius: 4, padding: "2px 6px", fontWeight: 500 }}>{t.type}</span>
-                <span style={{ fontSize: 10, color: t.createdBy === "gabriel" ? COLORS.gabriel : COLORS.steph }}>{t.createdBy === "gabriel" ? "🌱 Gabriel" : "🌸 Steph"}</span>
-              </div>
-              <div style={{ fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{t.description || t.category}</div>
-              <div style={{ fontSize: 11, color: COLORS.muted }}>{t.category} · {t.date}</div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: 16, fontWeight: 500, color: t.type === "income" ? COLORS.income : COLORS.expense }}>
-                {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
-              </div>
-              <button onClick={() => onEdit(t)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 6, cursor: "pointer", color: COLORS.muted, fontSize: 12, padding: "2px 6px" }}>✎</button>
-              {t.createdBy === user && (
-                <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
-              )}
-            </div>
-          </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 10px", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "0 4px 10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: COLORS.text }}>Spent in {monthName}: {fmt(monthSpent)}</span>
+          {monthSpent > 0 && <span style={{ fontSize: 11, color: COLORS.muted }}>about {fmt(monthSpent / daysSoFar)} a&nbsp;day</span>}
         </div>
+        <DayCalendar month={selectedMonth} txList={filteredTx} selected={day} onSelect={setDay} />
+        <div style={{ fontSize: 11, color: COLORS.muted, padding: "10px 4px 0", lineHeight: 1.5 }}>
+          Tap a day to see its entries. Darker days spent more; a green dot means&nbsp;income.
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 15, fontWeight: 500, color: COLORS.text }}>{title}</span>
+        {daySpent > 0 && <span style={{ fontSize: 13, color: COLORS.expense, whiteSpace: "nowrap" }}>Spent {fmt(daySpent)}</span>}
+      </div>
+      {sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: day ? 30 : 60, color: COLORS.muted, fontStyle: "italic" }}>{day ? "Nothing logged on this day" : "No transactions yet this month"}</div>
+      ) : sorted.map((t: any, i: number) => {
+        const daySum = !day && t.date !== sorted[i - 1]?.date ? sum(sorted.filter((x: any) => x.date === t.date)) : 0;
+        return <div key={t.id}>
+          {/* The whole month is grouped under one small heading per day. */}
+          {!day && t.date !== sorted[i - 1]?.date && (
+            <button onClick={() => setDay(t.date)} style={{ display: "flex", justifyContent: "space-between", width: "100%", background: "none", border: "none", padding: "6px 2px 8px", cursor: "pointer", fontFamily: "'Georgia', serif", fontSize: 12, color: COLORS.muted }}>
+              <span>{new Date(t.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+              <span>{daySum ? fmt(daySum) : ""}</span>
+            </button>
+          )}
+          <EntryCard t={t} user={user} onEdit={onEdit} onDelete={onDelete} />
+        </div>;
+      })}
+      {day && filteredTx.length > 0 && (
+        <button onClick={() => setDay(null)} style={{ width: "100%", background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 10, color: COLORS.text, fontSize: 13, padding: 12, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 4 }}>See all of {monthName}</button>
+      )}
+    </div>
+  );
+}
+
+// A card can't pay the card, so choosing Credit Card Payment moves "Credit card" to "Debit / transfer".
+function withPaidWith(f: any, k: string, v: any) {
+  const next = { ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) };
+  if (next.category === CARD_PAYMENT && next.paid_with === "card") next.paid_with = "debit";
+  return next;
+}
+
+function PaidWithPicker({ value, onChange, small }: any) {
+  return (
+    <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2 }}>
+      {PAID_WITH.map(p => (
+        <button key={p.id} type="button" onClick={() => onChange(p.id)} style={{
+          flex: "1 1 auto", background: value === p.id ? COLORS.card : "transparent", border: "none", borderRadius: 6, padding: small ? "5px 6px" : "7px 8px", fontSize: 12,
+          cursor: "pointer", color: value === p.id ? COLORS.text : COLORS.muted, fontFamily: "'Georgia', serif", fontWeight: value === p.id ? 500 : 400, whiteSpace: "nowrap"
+        }}>{p.label}</button>
       ))}
     </div>
   );
 }
 
 function EditTransactionModal({ tx, onSave, onClose }: any) {
-  const [form, setForm] = useState({ type: tx.type, amount: tx.amount, category: tx.category, description: tx.description || "", date: tx.date });
+  const [form, setForm] = useState({ type: tx.type, amount: tx.amount, category: tx.category, description: tx.description || "", date: tx.date, paid_with: tx.paid_with || "" });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
-  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
+  const set = (k: string, v: any) => setForm((f: any) => withPaidWith(f, k, v));
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
@@ -523,6 +643,7 @@ function EditTransactionModal({ tx, onSave, onClose }: any) {
         {[
           { label: "Amount (USD)", el: <input type="number" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} style={inputStyle} /> },
           { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map((c: string) => <option key={c}>{c}</option>)}</select> },
+          ...(form.type === "expense" ? [{ label: form.paid_with ? "Paid with" : "Paid with (not set yet)", el: <PaidWithPicker value={form.paid_with} onChange={(v: string) => set("paid_with", v)} /> }] : []),
           { label: "Date", el: <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={inputStyle} /> },
           { label: "Description (optional)", el: <input type="text" value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Saturday market" style={inputStyle} /> },
         ].map(({ label, el }) => (
@@ -531,7 +652,7 @@ function EditTransactionModal({ tx, onSave, onClose }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.amount) onSave(tx.id, form); }} style={{ width: "100%", background: COLORS.gabriel, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Save changes</button>
+        <button onClick={() => { if (form.amount) onSave(tx.id, { ...form, paid_with: form.type === "expense" ? form.paid_with || null : null }); }} style={{ width: "100%", background: COLORS.gabriel, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8 }}>Save changes</button>
       </div>
     </div>
   );
@@ -722,7 +843,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
     setError("");
     const es = lang.startsWith("es");
     const { entries: list, skipped, repeats } = parseSpoken(said, { speaker: user, today: today(), history, categories: CATEGORIES });
-    setEntries(list.map(x => ({ ...x, amount: String(x.amount) })));
+    setEntries(list.map(x => ({ ...x, amount: String(x.amount), paid_with: x.type !== "expense" ? null : x.paid || (x.category === CARD_PAYMENT ? "debit" : lastPaidWith()) })));
     if (!list.length) { setNote(es ? "No encontré un monto. Di un número, por ejemplo \"12 en el mercado\"." : "I didn't find an amount. Say a number, like \"12 at the market\"."); return; }
     const notes = [];
     if (skipped.length) notes.push((es ? "Sin monto, lo dejé fuera: " : "No amount, so I left out: ") + skipped.join("; "));
@@ -736,7 +857,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
   };
 
   const setEntry = (i: number, k: string, v: any) => setEntries((prev: any) => prev.map((x: any, j: number) => j !== i ? x : {
-    ...x, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {})
+    ...withPaidWith(x, k, v), ...(k === "type" && v === "expense" && !x.paid_with ? { paid_with: lastPaidWith() } : {})
   }));
   const removeEntry = (i: number) => setEntries((prev: any) => prev.filter((_: any, j: number) => j !== i));
   const startOver = () => { setEntries(null); setNote(""); setError(""); updateText(""); };
@@ -746,6 +867,8 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
 
   const save = async () => {
     if (!ready.length) return;
+    const lastPaid = ready.filter((x: any) => x.type === "expense" && x.category !== CARD_PAYMENT).pop();
+    if (lastPaid) rememberPaidWith(lastPaid.paid_with);
     setSavingState(true);
     const ok = await onSave(ready);
     setSavingState(false);
@@ -817,6 +940,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
                   </select>
                 </div>
                 <input type="text" value={x.description} onChange={e => setEntry(i, "description", e.target.value)} placeholder="Description" style={{ ...small, marginBottom: 8 }} />
+                {x.type === "expense" && <div style={{ marginBottom: 8 }}><PaidWithPicker small value={x.paid_with} onChange={(v: string) => setEntry(i, "paid_with", v)} /></div>}
                 <div style={{ display: "flex", gap: 8 }}>
                   <input type="date" value={x.date} onChange={e => setEntry(i, "date", e.target.value)} style={{ ...small, flex: 1, minWidth: 0 }} />
                   <div style={{ display: "flex", background: COLORS.border, borderRadius: 8, padding: 2, gap: 2, flex: 1 }}>
@@ -825,7 +949,7 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
                 </div>
                 {alreadySaved(x) && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8, background: "#fdf3e1", borderRadius: 8, padding: "8px 10px", fontSize: 12, color: "#8a5a00", lineHeight: 1.4 }}>
-                    <span>{lang.startsWith("es") ? "Ya está guardado. No lo guardo otra vez." : "Already saved, so I won't save it again."}</span>
+                    <span>{lang.startsWith("es") ? "Ya está guardado. No lo guardo otra\u00a0vez." : "Already saved, so I won't save it\u00a0again."}</span>
                     <button onClick={() => setEntry(i, "keep", true)} style={{ background: "none", border: "1px solid #e0c48f", borderRadius: 6, padding: "4px 8px", fontSize: 12, color: "#8a5a00", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "'Georgia', serif" }}>{lang.startsWith("es") ? "Guardar igual" : "Save it anyway"}</button>
                   </div>
                 )}
@@ -845,9 +969,9 @@ function VoiceSheet({ user, history, onSave, onClose, onTypeInstead }: any) {
 }
 
 function AddTransactionModal({ onAdd, onClose, user, saving, onSayIt }: any) {
-  const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "" });
+  const [form, setForm] = useState({ type: "expense", date: today(), amount: "", category: CATEGORIES.expense[0], description: "", paid_with: lastPaidWith() });
   const cats = CATEGORIES[form.type as keyof typeof CATEGORIES];
-  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v, ...(k === "type" ? { category: CATEGORIES[v as keyof typeof CATEGORIES][0] } : {}) }));
+  const set = (k: string, v: any) => setForm((f: any) => withPaidWith(f, k, v));
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: COLORS.card, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 430, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
@@ -870,6 +994,7 @@ function AddTransactionModal({ onAdd, onClose, user, saving, onSayIt }: any) {
         {[
           { label: "Amount (USD)", el: <input type="number" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} placeholder="0.00" style={inputStyle} /> },
           { label: "Category", el: <select value={form.category} onChange={e => set("category", e.target.value)} style={inputStyle}>{cats.map((c: string) => <option key={c}>{c}</option>)}</select> },
+          ...(form.type === "expense" ? [{ label: "Paid with", el: <PaidWithPicker value={form.paid_with} onChange={(v: string) => set("paid_with", v)} /> }] : []),
           { label: "Date", el: <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={inputStyle} /> },
           { label: "Description (optional)", el: <input type="text" value={form.description} onChange={e => set("description", e.target.value)} placeholder="e.g. Saturday market" style={inputStyle} /> },
         ].map(({ label, el }) => (
@@ -878,7 +1003,7 @@ function AddTransactionModal({ onAdd, onClose, user, saving, onSayIt }: any) {
             {el}
           </div>
         ))}
-        <button onClick={() => { if (form.amount) onAdd(form); }} disabled={saving} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8, opacity: saving ? 0.5 : 1 }}>{saving ? "Saving..." : "Add transaction"}</button>
+        <button onClick={() => { if (!form.amount) return; if (form.type === "expense" && form.category !== CARD_PAYMENT) rememberPaidWith(form.paid_with); onAdd(form); }} disabled={saving} style={{ width: "100%", background: COLORS.text, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", marginTop: 8, opacity: saving ? 0.5 : 1 }}>{saving ? "Saving..." : "Add transaction"}</button>
       </div>
     </div>
   );

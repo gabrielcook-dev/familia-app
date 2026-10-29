@@ -5,7 +5,7 @@
 type Categories = { expense: string[]; income: string[] };
 type Tok = { raw: string; norm: string; num?: number; kind?: "amount" | "date" | "skip" };
 
-export type Parsed = { type: string; amount: number; category: string; description: string; date: string; who: string };
+export type Parsed = { type: string; amount: number; category: string; description: string; date: string; who: string; paid: string | null };
 
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const stem = (w: string) => (w.length > 4 && w.endsWith("es") ? w.slice(0, -2) : w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w);
@@ -60,7 +60,7 @@ const VERBS = new Set(["spent", "spend", "paid", "pay", "bought", "buy", "got", 
 const TIME_WORDS = new Set(["today", "yesterday", "hoy", "ayer", "anteayer", "antier", "last", "pasado", "before", "day"]);
 const PRONOUNS = new Set(["i", "we", "me", "my", "our", "yo", "nosotros", "nos", "mi"]);
 const FIRST_PERSON = new Set(["i", "yo", "pague", "gaste", "compre", "recibi", "cobre", "gane", "vendi"]);
-const EDGE = new Set(["for", "at", "on", "in", "of", "to", "from", "with", "the", "a", "an", "and", "en", "por", "para", "de", "del", "al", "con", "el", "la", "los", "las", "un", "una", "y", "e"]);
+const EDGE = new Set(["for", "at", "on", "in", "of", "to", "from", "with", "by", "via", "the", "a", "an", "and", "en", "por", "para", "de", "del", "al", "con", "el", "la", "los", "las", "un", "una", "y", "e"]);
 
 // Built-in hints, so a new word still lands somewhere sensible. Past entries add to these.
 const KEYWORDS: Record<string, string[]> = {
@@ -88,6 +88,26 @@ const KEYWORDS: Record<string, string[]> = {
   "Sound Journey": ["sound journey", "sound", "sonido"],
   "Vibraçao": ["vibracao", "dance", "baile", "ecstatic"],
 };
+
+// How it was paid ("with cash", "con tarjeta"). These words say how, not what, so they never pick the category.
+const PAY_WORDS = new Map(Object.entries({
+  cash: "cash", efectivo: "cash", card: "card", tarjeta: "card", credit: "card", credito: "card",
+  debit: "debit", debito: "debit", transfer: "debit", transferred: "debit", transferencia: "debit", transferi: "debit",
+}));
+// Paying the card itself ("paid the card 300", "pago de la tarjeta") is the Credit Card Payment category.
+const CARD_PAYMENT = "Credit Card Payment";
+const CARD_PAYMENT_PHRASES = ["card payment", "card bill", "pay the card", "paid the card", "pay off the card", "paid off the card", "pay my card",
+  "paid my card", "pay off my card", "paid off my card", "pay the credit card", "paid the credit card", "pago de tarjeta", "pago de la tarjeta",
+  "pago tarjeta", "pago de mi tarjeta", "pago la tarjeta", "pague la tarjeta", "pague mi tarjeta", "pagar la tarjeta", "pagamos la tarjeta"];
+const saysCardPayment = (text: string) => CARD_PAYMENT_PHRASES.some(k => text.includes(` ${k} `));
+
+function paidWith(toks: Tok[], cardPayment: boolean) {
+  const kinds = toks.map(t => PAY_WORDS.get(t.norm)).filter(Boolean);
+  if (kinds.includes("debit")) return "debit";
+  if (kinds.includes("cash")) return "cash";
+  if (kinds.includes("card") && !cardPayment) return "card";
+  return null;
+}
 
 function readDigits(raw: string): number | null {
   let s = raw.replace(/^\$/, "");
@@ -247,8 +267,9 @@ function scoreCategories(words: string[], text: string, model: Record<string, Re
   return score;
 }
 
-function describe(toks: Tok[]) {
+function describe(toks: Tok[], dropPayWords = false) {
   const kept = toks.filter(t => t.num === undefined && t.kind !== "date" && !/^[.!?;,]$/.test(t.raw) && !CURRENCY.has(t.norm) && !CENTS.has(t.norm)
+    && !(dropPayWords && PAY_WORDS.has(t.norm))
     && !(t.norm in PEOPLE) && !(t.norm in WEEKDAYS) && !(t.norm in MONTHS) && !/^\d+(st|nd|rd|th)$/.test(t.norm)
     && !VERBS.has(t.norm) && !TIME_WORDS.has(t.norm) && !PRONOUNS.has(t.norm));
   while (kept.length && EDGE.has(kept[0].norm)) kept.shift();
@@ -273,6 +294,7 @@ export function parseSpoken(text: string, opts: { speaker: string; today: string
     const sDate = readDate(sentence, today);
     markAmounts(sentence);
     const sWho = sentence.map(t => PEOPLE[t.norm]).find(Boolean) || null;
+    const sPaid = paidWith(sentence, saysCardPayment(` ${sentence.map(t => t.norm).join(" ")} `));
     const amountCount = sentence.filter(t => t.kind === "amount").length;
     if (!amountCount) { carryDate = sDate ?? carryDate; carryWho = sWho ?? carryWho; continue; }
 
@@ -302,17 +324,21 @@ export function parseSpoken(text: string, opts: { speaker: string; today: string
       const amt = item.find(t => t.kind === "amount");
       if (!amt || !amt.num || amt.num <= 0) continue;
       const itemText = ` ${item.map(t => t.norm).join(" ")} `;
-      const words = item.filter(t => t.num === undefined).map(t => t.norm).filter(w => w.length >= 3 && !FILLER.has(w));
-      const score = scoreCategories(words, itemText.trim(), model);
-      const saysIncome = INCOME_WORDS.some(k => itemText.includes(` ${k} `));
+      const cardPayment = categories.expense.includes(CARD_PAYMENT) && saysCardPayment(itemText);
+      const what = cardPayment ? item : item.filter(t => !PAY_WORDS.has(t.norm));
+      const words = what.filter(t => t.num === undefined).map(t => t.norm).filter(w => w.length >= 3 && !FILLER.has(w));
+      const score = scoreCategories(words, what.map(t => t.norm).join(" "), model);
+      const saysIncome = !cardPayment && INCOME_WORDS.some(k => itemText.includes(` ${k} `));
       const bestOf = (list: string[]) => list.reduce((best, c) => (score[c] || 0) > (score[best] || 0) ? c : best, list[list.length - 1]);
       const bestIncome = bestOf(categories.income), bestExpense = bestOf(categories.expense);
       const type = saysIncome || (score[bestIncome] || 0) > Math.max(1, score[bestExpense] || 0) ? "income" : "expense";
-      const best = type === "income" ? bestIncome : bestExpense;
+      const best = cardPayment ? CARD_PAYMENT : type === "income" ? bestIncome : bestExpense;
+      const description = describe(item, true);
       const iWho = item.map(t => PEOPLE[t.norm]).find(Boolean) || (item.some(t => FIRST_PERSON.has(t.norm)) ? speaker : null);
       entries.push({
-        type, amount: Math.round(amt.num * 100) / 100, category: best,
-        description: describe(item),
+        type: cardPayment ? "expense" : type, amount: Math.round(amt.num * 100) / 100, category: best,
+        description: cardPayment ? (description ? `Card payment (${description})` : "Card payment") : description,
+        paid: paidWith(item, cardPayment) ?? sPaid,
         date: readDate(item, today) ?? sDate ?? carryDate ?? today,
         who: iWho || sWho || carryWho || speaker,
       });
