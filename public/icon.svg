@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Familia's sprout: cream leaves on the app's green, a gold line of soil. Kept inside the centre circle so phones can crop it to any shape. -->
+  <rect width="1024" height="1024" fill="#1a6b4a"/>
+  <g transform="translate(512 512) scale(1.1) translate(-526 -544)">
+    <path d="M512 770 C 512 690, 508 610, 512 540" stroke="#faf8f4" stroke-width="40" stroke-linecap="round" fill="none"/>
+    <path d="M506 585 C 420 600, 300 560, 262 400 C 410 370, 494 460, 506 585 Z" fill="#faf8f4"/>
+    <path d="M500 575 C 440 520, 360 470, 300 432" stroke="#1a6b4a" stroke-width="14" stroke-linecap="round" fill="none"/>
+    <path d="M516 530 C 540 400, 640 290, 790 292 C 790 450, 670 545, 516 530 Z" fill="#faf8f4"/>
+    <path d="M524 520 C 590 450, 670 380, 752 324" stroke="#1a6b4a" stroke-width="14" stroke-linecap="round" fill="none"/>
+    <path d="M352 778 H 672" stroke="#d4a853" stroke-width="36" stroke-linecap="round"/>
+  </g>
+</svg>
